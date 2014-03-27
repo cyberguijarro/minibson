@@ -448,22 +448,34 @@ namespace bson {
             template<typename value_type>
             document& set(const std::string& key, const value_type& value) {
                 typedef typename type_converter<value_type>::node_class node_class;
+
+                if (find(key) != end())
+                    delete (*this)[key];
                 
                 (*this)[key] = new node_class(value);
                 return (*this);
             }
             
             document& set(const std::string& key, const char* value) {
+                if (find(key) != end())
+                    delete (*this)[key];
+
                 (*this)[key] = new string(value);
                 return (*this);
             }
             
             document& set(const std::string& key, const document& value) {
+                if (find(key) != end())
+                    delete (*this)[key];
+
                 (*this)[key] = value.copy();
                 return (*this);
             }
             
             document& set(const std::string& key) {
+                if (find(key) != end())
+                    delete (*this)[key];
+
                 (*this)[key] = new null();
                 return (*this);
             }
