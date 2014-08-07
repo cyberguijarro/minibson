@@ -127,15 +127,17 @@ namespace bson {
             string(const std::string& value) : value(value) { }
 
             string(const void* const buffer, const size_t count) {
-                value.assign(reinterpret_cast<const char*>(buffer));
+                value.assign(reinterpret_cast<const char*>(buffer) + sizeof(unsigned int), *reinterpret_cast<const unsigned int*>(buffer) - 1);
             };
 
             void serialize(void* const buffer, const size_t count) const {
-                std::strncpy(reinterpret_cast<char*>(buffer), value.c_str(), count);
+                *reinterpret_cast<unsigned int*>(buffer) = value.length() + 1;
+                std::memcpy(reinterpret_cast<char*>(buffer) + sizeof(unsigned int), value.c_str(), value.length());
+                *(reinterpret_cast<char*>(buffer) + count - 1) = '\0';
             }
 
             size_t get_serialized_size() const {
-                return value.length() + 1;
+                return sizeof(unsigned int) + value.length() + 1;
             }
 
             unsigned char get_node_code() const {
