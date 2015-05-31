@@ -1,20 +1,20 @@
-#include "bson.hpp"
+#include "minibson.hpp"
 #include "microbson.hpp"
 #include <cassert>
 
-void test_bson();
+void test_minibson();
 void test_microbson();
 
 int main()
 {
-    test_bson();
+    test_minibson();
     test_microbson();
     return 0;
 }
 
-void test_bson()
+void test_minibson()
 {
-    using namespace bson;
+    using namespace minibson;
     using namespace std;
 
     document d;
@@ -67,15 +67,15 @@ void test_microbson()
 {
     using namespace std;
 
-    bson::document d;
+    minibson::document d;
 
     d.set("int32", 1);
     d.set("int64", 140737488355328LL);
     d.set("float", 30.20);
     d.set("string", "text");
-    d.set("binary", bson::binary::buffer(&d, sizeof(d)));
+    d.set("binary", minibson::binary::buffer(&d, sizeof(d)));
     d.set("boolean", true);
-    d.set("document", bson::document().set("a", 3).set("b", 4));
+    d.set("document", minibson::document().set("a", 3).set("b", 4));
     d.set("null");
     
     size_t size = d.get_serialized_size();	

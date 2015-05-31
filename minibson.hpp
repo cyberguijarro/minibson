@@ -6,7 +6,7 @@
 #include <iostream>
 #include <map>
 
-namespace bson {
+namespace minibson {
 
     // Basic types
 
