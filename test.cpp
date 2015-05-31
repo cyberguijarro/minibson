@@ -1,7 +1,19 @@
 #include "bson.hpp"
+#include "microbson.hpp"
 #include <cassert>
 
-int main() {
+void test_bson();
+void test_microbson();
+
+int main()
+{
+    test_bson();
+    test_microbson();
+    return 0;
+}
+
+void test_bson()
+{
     using namespace bson;
     using namespace std;
 
@@ -49,6 +61,45 @@ int main() {
     assert(d1.get("boolean", false) == true);
     assert(d1.get("document", document()).contains("a") && d.get("document", document()).contains("b"));
     assert(d1.contains("null"));
+}
 
-    return 0;
+void test_microbson()
+{
+    using namespace std;
+
+    bson::document d;
+
+    d.set("int32", 1);
+    d.set("int64", 140737488355328LL);
+    d.set("float", 30.20);
+    d.set("string", "text");
+    d.set("binary", bson::binary::buffer(&d, sizeof(d)));
+    d.set("boolean", true);
+    d.set("document", bson::document().set("a", 3).set("b", 4));
+    d.set("null");
+    
+    size_t size = d.get_serialized_size();	
+    char* buffer = new char[size];
+    d.serialize(buffer, size);
+    
+    microbson::document m(buffer, size);
+    
+    assert(m.contains<int>("int32"));
+    assert(m.contains<long long int>("int64"));
+    assert(m.contains<double>("float"));
+    assert(m.contains<std::string>("string"));
+    assert(m.contains<void*>("binary"));
+    assert(m.contains<bool>("boolean"));
+    assert(m.contains<microbson::document>("document"));
+    assert(m.contains("null"));
+
+    assert(m.get("int32", 0) == 1);
+    assert(m.get("int64", 0LL) == 140737488355328LL);
+    assert(m.get("float", 0.0) == 30.20);
+    assert(m.get("string", string("")) == "text");
+    assert(m.get("binary").second == sizeof(d));
+    assert(m.get("boolean", false) == true);
+    assert(m.get("document", microbson::document()).contains("a") && m.get("document", microbson::document()).contains("b"));
+    
+    delete[] buffer;
 }
