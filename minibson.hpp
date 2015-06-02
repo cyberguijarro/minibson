@@ -229,7 +229,7 @@ namespace minibson {
                     std::memcpy(value.data, byte_buffer, value.length);
                 }
                 else {
-                    value.length = *reinterpret_cast<const size_t*>(byte_buffer);
+                    value.length = *reinterpret_cast<const int*>(byte_buffer);
                     value.data = new unsigned char[value.length];
                     std::memcpy(value.data, byte_buffer + 5, value.length);
                 }
@@ -240,7 +240,7 @@ namespace minibson {
             void serialize(void* const buffer, const size_t count) const {
                 unsigned char* byte_buffer = reinterpret_cast<unsigned char*>(buffer);
 
-                *reinterpret_cast<size_t*>(byte_buffer) = value.length;
+                *reinterpret_cast<int*>(byte_buffer) = value.length;
                 std::memcpy(byte_buffer + 5, value.data, value.length);
             }
 
@@ -396,7 +396,7 @@ namespace minibson {
         public:
             document() { }
 
-            document(const void* const buffer, const size_t count) : element_list(reinterpret_cast<const unsigned char*>(buffer) + 4, *reinterpret_cast<const size_t*>(buffer) - 4 - 1) { }
+            document(const void* const buffer, const size_t count) : element_list(reinterpret_cast<const unsigned char*>(buffer) + 4, *reinterpret_cast<const int*>(buffer) - 4 - 1) { }
 
             void serialize(void* const buffer, const size_t count) const {
                 size_t serialized_size = get_serialized_size();
