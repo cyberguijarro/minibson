@@ -278,7 +278,7 @@ namespace microbson
                 document result(_default);
 
                 if (found)
-                    result = document(_node.bytes, _node.get_size());
+                    result = document(_node.get_data(), _node.get_size());
 
                 return result;
             }
