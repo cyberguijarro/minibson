@@ -171,7 +171,7 @@ namespace microbson
                 return std::string(
                     reinterpret_cast<const char*>(_node.get_data())
                         + sizeof(int),
-                    *reinterpret_cast<int*>(_node.get_data())
+                    *reinterpret_cast<int*>(_node.get_data()) - 1
                 );
             }
 
