@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cstdint>
 #include <string>
 #include <iostream>
 #include <map>
@@ -69,11 +70,11 @@ namespace minibson {
                 scalar(const T value) : value(value) { }
 
                 scalar(const void* const buffer, const size_t count) {
-                    value = *reinterpret_cast<const T*>(buffer);
+                    std::memcpy( &value, buffer, sizeof( T ) );
                 };
 
                 void serialize(void* const buffer, const size_t count) const {
-                    *reinterpret_cast<T*>(buffer) = value;
+                    std::memcpy( buffer, &value, sizeof( T ) );
                 }
 
                 size_t get_serialized_size() const {
@@ -127,13 +128,16 @@ namespace minibson {
             string(const std::string& value) : value(value) { }
 
             string(const void* const buffer, const size_t count) {
-                value.assign(reinterpret_cast<const char*>(buffer) + sizeof(unsigned int), *reinterpret_cast<const unsigned int*>(buffer) - 1);
+                unsigned size;
+                std::memcpy( &size, static_cast< const char* >( buffer ), sizeof( unsigned ) );
+                value.assign( static_cast< const char* >( buffer ) + sizeof( unsigned int ), size - 1 );
             };
 
             void serialize(void* const buffer, const size_t count) const {
-                *reinterpret_cast<unsigned int*>(buffer) = value.length() + 1;
-                std::memcpy(reinterpret_cast<char*>(buffer) + sizeof(unsigned int), value.c_str(), value.length());
-                *(reinterpret_cast<char*>(buffer) + count - 1) = '\0';
+                unsigned size = value.length() + 1;
+                std::memcpy( buffer, &size, sizeof( unsigned ) );
+                std::memcpy( static_cast< char* >( buffer ) + sizeof( unsigned int ), value.c_str(), value.length() );
+                *( static_cast< char* >( buffer ) + count - 1 ) = '\0';
             }
 
             size_t get_serialized_size() const {
@@ -162,14 +166,14 @@ namespace minibson {
             boolean(const bool value) : value(value) { }
 
             boolean(const void* const buffer, const size_t count) {
-                switch (*reinterpret_cast<const unsigned char*>(buffer)) {
+                switch ( *static_cast< const unsigned char* >( buffer ) ) {
                     case 1: value = true; break;
                     default: value = false; break;
                 }
             };
 
-            void serialize(void* const buffer, const size_t count) const {
-                *reinterpret_cast<unsigned char*>(buffer) = value ? true : false;
+            void serialize(void* const buffer, const size_t count) const { 
+                *static_cast< unsigned char* >( buffer ) = value ? true : false;
             }
 
             size_t get_serialized_size() const {
@@ -204,7 +208,7 @@ namespace minibson {
 
                 ~buffer() {
                     if (owned)
-                        delete[] reinterpret_cast<unsigned char*>(data);
+                        delete[] static_cast<unsigned char*>(data);
                 }
 
                 void dump(std::ostream& stream) const { stream << "<binary: " << length << " bytes>"; };
@@ -221,7 +225,7 @@ namespace minibson {
             binary(const buffer& buffer) : value(buffer) { }
 
             binary(const void* const buffer, const size_t count, const bool create = false) : value(NULL, 0) {
-                const unsigned char* byte_buffer = reinterpret_cast<const unsigned char*>(buffer);
+                const unsigned char* byte_buffer = static_cast<const unsigned char*>(buffer);
 
                 if (create) {
                     value.length = count;
@@ -229,19 +233,22 @@ namespace minibson {
                     std::memcpy(value.data, byte_buffer, value.length);
                 }
                 else {
-                    value.length = *reinterpret_cast<const int*>(byte_buffer);
+                    uint32_t length;
+                    std::memcpy( &length, byte_buffer, sizeof( uint32_t ) );
+                    value.length = length;
                     value.data = new unsigned char[value.length];
-                    std::memcpy(value.data, byte_buffer + 5, value.length);
+                    std::memcpy( value.data, byte_buffer + 5, value.length );
                 }
                 
                 value.owned = true;
             };
 
             void serialize(void* const buffer, const size_t count) const {
-                unsigned char* byte_buffer = reinterpret_cast<unsigned char*>(buffer);
+                unsigned char* byte_buffer = static_cast< unsigned char* >( buffer );
 
-                *reinterpret_cast<int*>(byte_buffer) = value.length;
-                std::memcpy(byte_buffer + 5, value.data, value.length);
+                uint32_t length = value.length;
+                std::memcpy( byte_buffer, &length, sizeof( uint32_t ) );
+                std::memcpy( byte_buffer + 5, value.data, value.length );
             }
 
             size_t get_serialized_size() const {
@@ -277,12 +284,12 @@ namespace minibson {
             }
 
             element_list(const void* const buffer, const size_t count) {
-                const unsigned char* byte_buffer = reinterpret_cast<const unsigned char*>(buffer);
+                const unsigned char* byte_buffer = static_cast<const unsigned char*>(buffer);
                 size_t position = 0;
 
                 while (position < count) {
-                    node_type type = static_cast<node_type>(byte_buffer[position++]);
-                    std::string name(reinterpret_cast<const char*>(byte_buffer + position));
+                    node_type   type = static_cast< node_type >( byte_buffer[position++] );
+                    std::string name( static_cast< const char* >( buffer ) + position );
                     node* node = NULL;
 
                     position += name.length() + 1;
@@ -298,7 +305,7 @@ namespace minibson {
             }
 
             void serialize(void* const buffer, const size_t count) const {
-                unsigned char* byte_buffer = reinterpret_cast<unsigned char*>(buffer);
+                unsigned char* byte_buffer = static_cast<unsigned char*>(buffer);
                 int position = 0;
 
                 for (const_iterator i = begin(); i != end(); i++) {
@@ -306,7 +313,7 @@ namespace minibson {
                     byte_buffer[position] = i->second->get_node_code();
                     position++;
                     // Key
-                    std::strcpy(reinterpret_cast<char*>(byte_buffer + position), i->first.c_str());
+                    std::strcpy( static_cast< char* >( buffer ) + position, i->first.c_str() );
                     position += i->first.length() + 1;
                     // Value
                     i->second->serialize(byte_buffer + position, count - position);
@@ -342,7 +349,7 @@ namespace minibson {
                 stream << " }";
             }
 
-            void dump(std::ostream& stream, const int level) const {
+            void dump(std::ostream& stream, int level) const {
                 stream << "{ ";
 
                 for (const_iterator i = begin(); i != end(); i++) {
@@ -393,19 +400,27 @@ namespace minibson {
     };
    
     class document : public element_list {
+        private:
+            static int as_int( const void* buffer ) {
+                int value;
+                std::memcpy( &value, buffer, sizeof( int ) );
+                return value;
+            }
+
         public:
             document() { }
 
-            document(const void* const buffer, const size_t count) : element_list(reinterpret_cast<const unsigned char*>(buffer) + 4, *reinterpret_cast<const int*>(buffer) - 4 - 1) { }
+            document( const void* const buffer, const size_t count ): element_list( static_cast< const unsigned char* >( buffer ) + 4, as_int( buffer ) - 4 - 1 ) { }
 
             void serialize(void* const buffer, const size_t count) const {
                 size_t serialized_size = get_serialized_size();
 
                 if (count >= serialized_size) {
-                    unsigned char* byte_buffer = reinterpret_cast<unsigned char*>(buffer);
+                    unsigned char* byte_buffer = static_cast< unsigned char* >( buffer );
 
-                    *reinterpret_cast<int*>(buffer) = serialized_size;
-                    element_list::serialize(byte_buffer + 4, count - 4 - 1);
+                    int size = static_cast< int >( serialized_size );
+                    std::memcpy( buffer, &size, sizeof( int ) );
+                    element_list::serialize( byte_buffer + 4, count - 4 - 1 );
                     byte_buffer[4 + element_list::get_serialized_size()] = 0;
                 }
             }
@@ -428,21 +443,21 @@ namespace minibson {
                 typedef typename type_converter<result_type>::node_class node_class;
 
                 if ((find(key) != end()) && (at(key)->get_node_code() == node_type_code))
-                    return reinterpret_cast<const node_class*>(at(key))->get_value();
+                    return static_cast<const node_class*>(at(key))->get_value();
                 else
                     return _default;
             }
             
             const document& get(const std::string& key, const document& _default) const {
                 if ((find(key) != end()) && (at(key)->get_node_code() == document_node))
-                    return *reinterpret_cast<const document*>(at(key));
+                    return *static_cast<const document*>(at(key));
                 else
                     return _default;
             }
 
             const std::string get(const std::string& key, const char* _default) const {
                 if ((find(key) != end()) && (at(key)->get_node_code() == string_node))
-                    return reinterpret_cast<const string*>(at(key))->get_value();
+                    return static_cast<const string*>(at(key))->get_value();
                 else
                     return std::string(_default);
             }
