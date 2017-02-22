@@ -127,7 +127,17 @@ namespace minibson {
             string(const std::string& value) : value(value) { }
 
             string(const void* const buffer, const size_t count) {
-                value.assign(reinterpret_cast<const char*>(buffer) + sizeof(unsigned int), *reinterpret_cast<const unsigned int*>(buffer) - 1);
+                if ( count >= 5 ) {
+                    const size_t max = count - sizeof(unsigned int);
+                    const size_t actual = *reinterpret_cast<const unsigned int*>(
+                        buffer
+                    );
+
+                    value.assign(
+                        reinterpret_cast<const char*>(buffer) + sizeof(unsigned int),
+                        std::min( actual, max ) - 1
+                    );
+                }
             };
 
             void serialize(void* const buffer, const size_t count) const {
