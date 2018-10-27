@@ -141,7 +141,7 @@ namespace minibson {
             };
 
             void serialize(void* const buffer, const size_t count) const {
-		size_t strLen = value.length();
+				size_t strLen = value.length();
                 *reinterpret_cast<unsigned int*>(buffer) = strLen + 1;
                 std::memcpy(reinterpret_cast<char*>(buffer) + sizeof(unsigned int), value.c_str(), strLen);
                 *(reinterpret_cast<char*>(buffer) + sizeof(unsigned int) + strLen) = '\0';
@@ -252,6 +252,7 @@ namespace minibson {
                 unsigned char* byte_buffer = reinterpret_cast<unsigned char*>(buffer);
 
                 *reinterpret_cast<int*>(byte_buffer) = value.length;
+				byte_buffer[4] = 0;//Set subtype to 0 ("new" binary subtype)
                 std::memcpy(byte_buffer + 5, value.data, value.length);
             }
 
