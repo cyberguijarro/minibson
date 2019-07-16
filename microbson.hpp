@@ -118,12 +118,11 @@ struct node {
 
 class document {
 private:
-  byte * bytes_;
-  size_t size_;
+  byte *bytes_;
 
   bool lookup(const char *name, node &result) const {
     byte * iterator = bytes_ + sizeof(int);
-    size_t left     = size_ - sizeof(int);
+    size_t left     = size() - sizeof(int);
     bool   found    = false;
 
     result = node(iterator);
@@ -198,14 +197,20 @@ private:
 
 public:
   document()
-      : bytes_(NULL)
-      , size_(0U) {}
+      : bytes_(NULL) {}
 
-  document(void *bytes, size_t count)
-      : bytes_(reinterpret_cast<byte *>(bytes))
-      , size_(count) {}
+  document(void *bytes, size_t = 0)
+      : bytes_(reinterpret_cast<byte *>(bytes)) {}
 
-  bool valid() const { return (size_ >= 7U) && (bytes_[size_ - 1] == 0); }
+  size_t size() const {
+    if (bytes_) {
+      return *reinterpret_cast<int *>(bytes_);
+    } else {
+      return 0;
+    }
+  }
+
+  bool valid() const { return (size() >= 7U) && (bytes_[size() - 1] == 0); }
 
   double get(const std::string &name, double _default) const {
     return get<double, double>(name, _default);
@@ -227,8 +232,9 @@ public:
     bool     found = lookup(name.c_str(), _node);
     document result(_default);
 
-    if (found)
-      result = document(_node.get_data(), _node.get_size());
+    if (found) {
+      result = document(_node.get_data());
+    }
 
     return result;
   }
@@ -260,7 +266,7 @@ public:
 
   void dump(std::ostream &_stream) const {
     byte * iterator = bytes_ + sizeof(int);
-    size_t left     = size_ - sizeof(int);
+    size_t left     = size() - sizeof(int);
     node   _node(iterator);
 
     _stream << "{ ";
