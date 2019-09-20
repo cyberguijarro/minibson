@@ -4,8 +4,10 @@
 #include <cstring>
 #include <iomanip>
 #include <iterator>
+#include <list>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace microbson {
 typedef unsigned char byte;
@@ -14,6 +16,7 @@ enum node_type {
   double_node   = 0x01,
   string_node   = 0x02,
   document_node = 0x03,
+  array_node    = 0x04,
   binary_node   = 0x05,
   boolean_node  = 0x08,
   null_node     = 0x0A,
@@ -35,6 +38,11 @@ struct type_converter<double> {
 template <>
 struct type_converter<std::string> {
   enum { node_type_code = string_node };
+};
+
+template <typename T>
+struct type_converter<std::vector<T>> {
+  enum { node_type_code = array_node };
 };
 
 template <>
@@ -85,6 +93,7 @@ struct node {
       result += sizeof(double);
       break;
     case document_node:
+    case array_node:
       result += *reinterpret_cast<int *>(bytes_ + result);
       break;
     case string_node:
@@ -113,7 +122,9 @@ struct node {
 
   void *get_data() const { return bytes_ + 1U + strlen(get_name()) + 1U; }
 
-  bool valid(size_t size) const { return (size >= 2) && (get_size() <= size); }
+  bool valid(size_t size) const {
+    return (size >= 2) && (get_size() <= size) && get_size() != 0;
+  }
 };
 
 class document {
@@ -202,6 +213,12 @@ public:
   document(void *bytes, size_t = 0)
       : bytes_(reinterpret_cast<byte *>(bytes)) {}
 
+  bool valid() const {
+    return bytes_ &&
+           (*reinterpret_cast<int *>(bytes_) == static_cast<int>(size())) &&
+           (size() >= 7U) && (bytes_[size() - 1] == 0);
+  }
+
   size_t size() const {
     if (bytes_) {
       return *reinterpret_cast<int *>(bytes_);
@@ -210,19 +227,34 @@ public:
     }
   }
 
-  bool valid() const { return (size() >= 7U) && (bytes_[size() - 1] == 0); }
-
   double get(const std::string &name, double _default) const {
     return get<double, double>(name, _default);
   }
 
   std::string get(const std::string &name, const std::string &_default) const {
+    std::string result;
     node        _node;
-    bool        found = lookup(name.c_str(), _node);
-    std::string result(_default);
 
-    if (found)
+    bool found = lookup(name.c_str(), _node);
+    if (found) {
       result = get_string(_node);
+    } else {
+      result = _default;
+    }
+
+    return result;
+  }
+
+  std::string get(const std::string &name, const char *default_) const {
+    std::string result;
+    node        node;
+
+    bool found = lookup(name.c_str(), node);
+    if (found) {
+      result = get_string(node);
+    } else {
+      result = default_;
+    }
 
     return result;
   }
@@ -274,14 +306,15 @@ public:
     while (_node.valid(left)) {
       _stream << _node.get_name() << " : ";
 
-      if (_node.get_type() == document_node)
+      if (_node.get_type() == document_node || _node.get_type() == array_node)
         document(_node.get_data(), *static_cast<int *>(_node.get_data()))
             .dump(_stream);
       else
         dump(_node, _stream);
 
-      iterator += _node.get_size();
-      left -= _node.get_size();
+      size_t size = _node.get_size();
+      iterator += size;
+      left -= size;
       _node = node(iterator);
 
       if (_node.valid(left))
@@ -289,6 +322,26 @@ public:
     }
 
     _stream << " }";
+  }
+
+  /**\brief just return keys in the document
+   * \todo add iterator and remove the method
+   */
+  std::list<std::string> keys() const {
+    std::list<std::string> retval;
+
+    byte * iterator = bytes_ + sizeof(int);
+    size_t left     = size() - sizeof(int);
+    node   node(iterator);
+    while (node.valid(left)) {
+      retval.emplace_back(node.get_name());
+      size_t size = node.get_size();
+      iterator += size;
+      left -= size;
+      node = microbson::node{iterator};
+    }
+
+    return retval;
   }
 
   bool contains(const std::string &name) const {

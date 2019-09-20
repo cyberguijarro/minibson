@@ -15,6 +15,7 @@ enum node_type {
   double_node   = 0x01,
   string_node   = 0x02,
   document_node = 0x03,
+  array_node    = 0x04,
   binary_node   = 0x05,
   boolean_node  = 0x08,
   null_node     = 0x0A,
@@ -509,7 +510,8 @@ public:
   const document &get(const std::string &key, const document &_default) const {
     auto founded = this->find(key);
     if ((founded != end()) &&
-        (founded->second->get_node_code() == document_node))
+        (founded->second->get_node_code() == document_node ||
+         founded->second->get_node_code() == array_node))
       return *reinterpret_cast<const document *>(founded->second.get());
     else
       return _default;
@@ -592,6 +594,7 @@ node::create(node_type type, const void *const buffer, const size_t count) {
   case double_node:
     return node_t{new Double(buffer, count)};
   case document_node:
+  case array_node:
     return node_t{new document(buffer, count)};
   case string_node:
     return node_t{new string(buffer, count)};
