@@ -89,12 +89,12 @@ namespace microbson
                 case document_node:
                     result += *reinterpret_cast<int*>(bytes + result);
                     break;
-                case string_node:
                 case binary_node:
+                    result += 1U;
+                case string_node:
                     result += (
                         sizeof(int) 
                             + *reinterpret_cast<int*>(bytes + result)
-                            + 1U
                     );
                     break;
                 case boolean_node:
