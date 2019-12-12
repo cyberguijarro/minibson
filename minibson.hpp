@@ -173,12 +173,13 @@ public:
     }
   };
 
-  void serialize(void *const buffer, const size_t count) const override {
+  void serialize(void *const                   buffer,
+                 [[maybe_unused]] const size_t count) const override {
     *reinterpret_cast<unsigned int *>(buffer) = value_.length() + 1;
     std::memcpy(reinterpret_cast<char *>(buffer) + sizeof(unsigned int),
                 value_.c_str(),
                 value_.length());
-    *(reinterpret_cast<char *>(buffer) + count - 1) = '\0';
+    *(reinterpret_cast<char *>(buffer) + get_serialized_size() - 1) = '\0';
   }
 
   size_t get_serialized_size() const override {
@@ -494,6 +495,7 @@ public:
     std::vector<uint8_t> retval(this->get_serialized_size());
     *reinterpret_cast<int *>(retval.data()) = retval.size();
     element_list::serialize(retval.data() + 4, retval.size() - 4 - 1);
+    *reinterpret_cast<char *>(retval.data() + retval.size() - 1) = 0;
     return retval;
   }
 
@@ -672,7 +674,7 @@ public:
         position += (*i)->get_serialized_size();
       }
 
-      byte_buffer[this->get_serialized_size()] = 0;
+      byte_buffer[serialized_size - 1 - 4] = '\0';
     }
   }
 

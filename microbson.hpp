@@ -219,10 +219,7 @@ public:
   bool empty() const { return !bytes_; }
 
   bool valid() const {
-    return bytes_ &&
-           (*reinterpret_cast<const int *>(bytes_) ==
-            static_cast<int>(size())) &&
-           (size() >= 7U) && (bytes_[size() - 1] == 0);
+    return bytes_ && (size() >= 7U) && (bytes_[size() - 1] == 0);
   }
 
   size_t size() const {
