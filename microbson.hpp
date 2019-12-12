@@ -71,12 +71,12 @@ struct type_converter<long long> {
 };
 
 struct node {
-  byte *bytes_;
+  const byte *bytes_;
 
   node()
       : bytes_(NULL) {}
 
-  node(byte *bytes)
+  node(const byte *bytes)
       : bytes_(bytes) {}
 
   node_type get_type() const { return static_cast<node_type>(bytes_[0]); }
@@ -94,13 +94,14 @@ struct node {
       break;
     case document_node:
     case array_node:
-      result += *reinterpret_cast<int *>(bytes_ + result);
+      result += *reinterpret_cast<const int *>(bytes_ + result);
       break;
     case string_node:
-      result += (sizeof(int) + *reinterpret_cast<int *>(bytes_ + result));
+      result += (sizeof(int) + *reinterpret_cast<const int *>(bytes_ + result));
       break;
     case binary_node:
-      result += (sizeof(int) + *reinterpret_cast<int *>(bytes_ + result) + 1U);
+      result +=
+          (sizeof(int) + *reinterpret_cast<const int *>(bytes_ + result) + 1U);
       break;
     case boolean_node:
       result += 1U;
@@ -120,21 +121,23 @@ struct node {
     return result;
   }
 
-  void *get_data() const { return bytes_ + 1U + strlen(get_name()) + 1U; }
+  const void *get_data() const { return bytes_ + 1U + strlen(get_name()) + 1U; }
 
   bool valid(size_t size) const {
     return (size >= 2) && (get_size() <= size) && get_size() != 0;
   }
+
+  bool empty() const { return !bytes_; }
 };
 
 class document {
 private:
-  byte *bytes_;
+  const byte *bytes_;
 
   bool lookup(const char *name, node &result) const {
-    byte * iterator = bytes_ + sizeof(int);
-    size_t left     = size() - sizeof(int);
-    bool   found    = false;
+    const byte *iterator = bytes_ + sizeof(int);
+    size_t      left     = size() - sizeof(int);
+    bool        found    = false;
 
     result = node(iterator);
 
@@ -154,13 +157,13 @@ private:
 
   template <typename T, typename W>
   T get(node _node) const {
-    return static_cast<T>(*reinterpret_cast<W *>(_node.get_data()));
+    return static_cast<T>(*reinterpret_cast<const W *>(_node.get_data()));
   }
 
   std::string get_string(const node &_node) const {
     return std::string(reinterpret_cast<const char *>(_node.get_data()) +
                            sizeof(int),
-                       *reinterpret_cast<int *>(_node.get_data()) - 1);
+                       *reinterpret_cast<const int *>(_node.get_data()) - 1);
   }
 
   template <typename T, typename W>
@@ -179,12 +182,12 @@ private:
       _stream << '"' << get_string(_node) << '"';
       break;
     case binary_node: {
-      byte *             bytes = reinterpret_cast<byte *>(_node.get_data());
+      const byte *bytes = reinterpret_cast<const byte *>(_node.get_data());
       std::ios::fmtflags flags(_stream.flags());
 
       _stream << std::hex << std::setw(2) << std::setfill('0');
       copy(bytes + 5U,
-           bytes + 5U + *static_cast<int *>(_node.get_data()),
+           bytes + 5U + *static_cast<const int *>(_node.get_data()),
            std::ostream_iterator<int>(_stream));
       _stream.flags(flags);
       break;
@@ -210,18 +213,21 @@ public:
   document()
       : bytes_(NULL) {}
 
-  document(void *bytes, size_t = 0)
-      : bytes_(reinterpret_cast<byte *>(bytes)) {}
+  document(const void *bytes, size_t = 0)
+      : bytes_(reinterpret_cast<const byte *>(bytes)) {}
+
+  bool empty() const { return !bytes_; }
 
   bool valid() const {
     return bytes_ &&
-           (*reinterpret_cast<int *>(bytes_) == static_cast<int>(size())) &&
+           (*reinterpret_cast<const int *>(bytes_) ==
+            static_cast<int>(size())) &&
            (size() >= 7U) && (bytes_[size() - 1] == 0);
   }
 
   size_t size() const {
     if (bytes_) {
-      return *reinterpret_cast<int *>(bytes_);
+      return *reinterpret_cast<const int *>(bytes_);
     } else {
       return 0;
     }
@@ -271,14 +277,14 @@ public:
     return result;
   }
 
-  std::pair<void *, size_t> get(const std::string &name) const {
-    node                      _node;
-    bool                      found = lookup(name.c_str(), _node);
-    std::pair<void *, size_t> result(NULL, 0U);
+  std::pair<const void *, size_t> get(const std::string &name) const {
+    node                            _node;
+    bool                            found = lookup(name.c_str(), _node);
+    std::pair<const void *, size_t> result(NULL, 0U);
 
     if (found) {
-      result.second = *reinterpret_cast<int *>(_node.get_data());
-      result.first  = reinterpret_cast<byte *>(_node.get_data()) + 5U;
+      result.second = *reinterpret_cast<const int *>(_node.get_data());
+      result.first  = reinterpret_cast<const byte *>(_node.get_data()) + 5U;
     }
 
     return result;
@@ -297,9 +303,9 @@ public:
   }
 
   void dump(std::ostream &_stream) const {
-    byte * iterator = bytes_ + sizeof(int);
-    size_t left     = size() - sizeof(int);
-    node   _node(iterator);
+    const byte *iterator = bytes_ + sizeof(int);
+    size_t      left     = size() - sizeof(int);
+    node        _node(iterator);
 
     _stream << "{ ";
 
@@ -307,7 +313,7 @@ public:
       _stream << _node.get_name() << " : ";
 
       if (_node.get_type() == document_node || _node.get_type() == array_node)
-        document(_node.get_data(), *static_cast<int *>(_node.get_data()))
+        document(_node.get_data(), *static_cast<const int *>(_node.get_data()))
             .dump(_stream);
       else
         dump(_node, _stream);
@@ -330,9 +336,9 @@ public:
   std::list<std::string> keys() const {
     std::list<std::string> retval;
 
-    byte * iterator = bytes_ + sizeof(int);
-    size_t left     = size() - sizeof(int);
-    node   node(iterator);
+    const byte *iterator = bytes_ + sizeof(int);
+    size_t      left     = size() - sizeof(int);
+    node        node(iterator);
     while (node.valid(left)) {
       retval.emplace_back(node.get_name());
       size_t size = node.get_size();

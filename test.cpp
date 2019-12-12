@@ -1,6 +1,7 @@
 #include "microbson.hpp"
 #include "minibson.hpp"
 #include <cassert>
+#include <iostream>
 
 void test_minibson();
 void test_microbson();
@@ -25,6 +26,9 @@ void test_minibson() {
   d.set("boolean", true);
   d.set("document", document().set("a", 3).set("b", 4));
   d.set("null");
+  d.set(
+      "array",
+      minibson::array{}.push_back<int>(0).push_back<int>(1).push_back<int>(2));
 
   assert(d.contains<int>("int32"));
   assert(d.contains<long long int>("int64"));
@@ -34,6 +38,7 @@ void test_minibson() {
   assert(d.contains<bool>("boolean"));
   assert(d.contains<document>("document"));
   assert(d.contains("null"));
+  assert(d.contains<minibson::array>("array"));
 
   assert(d.get("int32", 0) == 1);
   assert(d.get("int64", 0LL) == 140737488355328LL);
@@ -43,6 +48,10 @@ void test_minibson() {
   assert(d.get("boolean", false) == true);
   assert(d.get("document", document()).contains("a") &&
          d.get("document", document()).contains("b"));
+  assert(d.get("array", minibson::array{}).size() == 3 &&
+         d.get("array", minibson::array{}).at<int>(0) == 0 &&
+         d.get("array", minibson::array{}).at<int>(1) == 1 &&
+         d.get("array", minibson::array{}).at<int>(2) == 2);
 
   size_t size   = d.get_serialized_size();
   char * buffer = new char[size];

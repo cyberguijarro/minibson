@@ -11,7 +11,7 @@ namespace minibson {
 
 // Basic types
 
-enum node_type {
+enum bson_node_type {
   double_node   = 0x01,
   string_node   = 0x02,
   document_node = 0x03,
@@ -23,6 +23,15 @@ enum node_type {
   int64_node    = 0x12,
   unknown_node  = 0xFF
 };
+
+// for prevent enum compare warning
+bool operator==(bson_node_type lhs, int rhs) {
+  return int(lhs) == int(rhs);
+}
+
+bool operator!=(bson_node_type lhs, int rhs) {
+  return int(lhs) != int(rhs);
+}
 
 template <typename T>
 struct type_converter {};
@@ -37,15 +46,16 @@ public:
   virtual ~node() {}
   virtual void   serialize(void *const buffer, const size_t count) const = 0;
   virtual size_t get_serialized_size() const                             = 0;
-  virtual unsigned char get_node_code() const { return 0; }
-  virtual node_t        copy() const               = 0;
-  virtual void          dump(std::ostream &) const = 0;
-  virtual void          dump(std::ostream &stream, int) const { dump(stream); }
+  virtual bson_node_type get_node_code() const                           = 0;
+  virtual node_t         copy() const                                    = 0;
+  virtual void           dump(std::ostream &) const                      = 0;
+  virtual void           dump(std::ostream &stream, int) const { dump(stream); }
   static node_t
-  create(node_type type, const void *const buffer, const size_t count);
+  create(bson_node_type type, const void *const buffer, const size_t count);
 
   node(const node &) = delete;
   node &operator=(const node &) = delete;
+  node &operator=(node &&) = default;
 };
 
 // Value types
@@ -56,18 +66,18 @@ public:
 
   null(const void *const, const size_t) {}
 
-  void serialize(void *const, const size_t) const {}
+  void serialize(void *const, const size_t) const override {}
 
-  size_t get_serialized_size() const { return 0; }
+  size_t get_serialized_size() const override { return 0; }
 
-  unsigned char get_node_code() const { return null_node; }
+  bson_node_type get_node_code() const override { return null_node; }
 
-  node_t copy() const { return node_t{}; }
+  node_t copy() const override { return node_t{}; }
 
-  void dump(std::ostream &stream) const { stream << "null"; };
+  void dump(std::ostream &stream) const override { stream << "null"; };
 };
 
-template <typename T, node_type N>
+template <typename T, bson_node_type N>
 class scalar : public node {
 private:
   T value_;
@@ -81,18 +91,18 @@ public:
     value_ = *reinterpret_cast<const T *>(buffer);
   };
 
-  void serialize(void *const buffer, const size_t count = 0) const {
+  void serialize(void *const buffer, const size_t count = 0) const override {
     (void)count;
     *reinterpret_cast<T *>(buffer) = value_;
   }
 
-  size_t get_serialized_size() const { return sizeof(T); }
+  size_t get_serialized_size() const override { return sizeof(T); }
 
-  unsigned char get_node_code() const { return N; }
+  bson_node_type get_node_code() const override { return N; }
 
-  node_t copy() const { return node_t{new scalar<T, N>(value_)}; }
+  node_t copy() const override { return node_t{new scalar<T, N>(value_)}; }
 
-  void dump(std::ostream &stream) const { stream << value_; };
+  void dump(std::ostream &stream) const override { stream << value_; };
 
   const T &get_value() const { return value_; }
 };
@@ -163,7 +173,7 @@ public:
     }
   };
 
-  void serialize(void *const buffer, const size_t count) const {
+  void serialize(void *const buffer, const size_t count) const override {
     *reinterpret_cast<unsigned int *>(buffer) = value_.length() + 1;
     std::memcpy(reinterpret_cast<char *>(buffer) + sizeof(unsigned int),
                 value_.c_str(),
@@ -171,15 +181,17 @@ public:
     *(reinterpret_cast<char *>(buffer) + count - 1) = '\0';
   }
 
-  size_t get_serialized_size() const {
+  size_t get_serialized_size() const override {
     return sizeof(unsigned int) + value_.length() + 1;
   }
 
-  unsigned char get_node_code() const { return string_node; }
+  bson_node_type get_node_code() const override { return string_node; }
 
-  node_t copy() const { return node_t{new string(value_)}; }
+  node_t copy() const override { return node_t{new string(value_)}; }
 
-  void dump(std::ostream &stream) const { stream << "\"" << value_ << "\""; };
+  void dump(std::ostream &stream) const override {
+    stream << "\"" << value_ << "\"";
+  };
 
   const std::string &get_value() const { return value_; }
 };
@@ -210,18 +222,18 @@ public:
     }
   };
 
-  void serialize(void *const buffer, const size_t count = 0) const {
+  void serialize(void *const buffer, const size_t count = 0) const override {
     (void)count;
     *reinterpret_cast<unsigned char *>(buffer) = value_ ? true : false;
   }
 
-  size_t get_serialized_size() const { return 1; }
+  size_t get_serialized_size() const override { return 1; }
 
-  unsigned char get_node_code() const { return boolean_node; }
+  bson_node_type get_node_code() const override { return boolean_node; }
 
-  node_t copy() const { return node_t{new boolean(value_)}; }
+  node_t copy() const override { return node_t{new boolean(value_)}; }
 
-  void dump(std::ostream &stream) const {
+  void dump(std::ostream &stream) const override {
     stream << (value_ ? "true" : "false");
   };
 
@@ -292,7 +304,7 @@ public:
     }
   };
 
-  void serialize(void *const buf, const size_t count = 0) const {
+  void serialize(void *const buf, const size_t count = 0) const override {
     (void)count;
     unsigned char *byte_buffer = reinterpret_cast<unsigned char *>(buf);
 
@@ -301,15 +313,15 @@ public:
         byte_buffer + sizeof(uint) + 1, value_.data.data(), value_.data.size());
   }
 
-  size_t get_serialized_size() const {
+  size_t get_serialized_size() const override {
     return sizeof(uint) + 1 + value_.data.size();
   }
 
-  unsigned char get_node_code() const { return binary_node; }
+  bson_node_type get_node_code() const override { return binary_node; }
 
-  node_t copy() const { return node_t{new binary(value_)}; }
+  node_t copy() const override { return node_t{new binary(value_)}; }
 
-  void dump(std::ostream &stream) const { value_.dump(stream); };
+  void dump(std::ostream &stream) const override { value_.dump(stream); };
 
   const buffer &get_value() const { return value_; }
 };
@@ -341,13 +353,16 @@ public:
   element_list(element_list &&rhs)
       : std::map<std::string, node_t>{std::move(rhs)} {}
 
+  element_list &operator=(element_list &&rhs) = default;
+
   element_list(const void *const buffer, const size_t count) {
     const unsigned char *byte_buffer =
         reinterpret_cast<const unsigned char *>(buffer);
     size_t position = 0;
 
     while (position < count) {
-      node_type   type = static_cast<node_type>(byte_buffer[position++]);
+      bson_node_type type =
+          static_cast<bson_node_type>(byte_buffer[position++]);
       std::string name(reinterpret_cast<const char *>(byte_buffer + position));
 
       position += name.length() + 1;
@@ -389,8 +404,6 @@ public:
     return result;
   }
 
-  node_t copy() const { return node_t{new element_list(*this)}; }
-
   void dump(std::ostream &stream) const {
     stream << "{ ";
 
@@ -398,9 +411,8 @@ public:
       stream << "\"" << i->first << "\": ";
       i->second->dump(stream);
 
-      if (++i != end())
+      if (std::next(i) != end())
         stream << ", ";
-      --i;
     }
 
     stream << " }";
@@ -451,20 +463,22 @@ public:
   ~element_list() {}
 };
 
+class array;
+
 class document : public element_list {
 public:
-  document() {}
+  document() = default;
 
   document(const document &) = default;
   document(document &&)      = default;
 
-  document(const void *const buffer, const size_t count = 0)
-      : element_list(reinterpret_cast<const unsigned char *>(buffer) + 4,
-                     *reinterpret_cast<const int *>(buffer) - 4 - 1) {
-    (void)count;
-  }
+  document &operator=(document &&) = default;
 
-  void serialize(void *const buffer, const size_t count) const {
+  document(const void *const buffer, [[maybe_unused]] const size_t count = 0)
+      : element_list(reinterpret_cast<const unsigned char *>(buffer) + 4,
+                     *reinterpret_cast<const int *>(buffer) - 4 - 1) {}
+
+  void serialize(void *const buffer, const size_t count) const override {
     size_t serialized_size = get_serialized_size();
 
     if (count >= serialized_size) {
@@ -483,19 +497,19 @@ public:
     return retval;
   }
 
-  size_t get_serialized_size() const {
+  size_t get_serialized_size() const override {
     return 4 + element_list::get_serialized_size() + 1;
   }
 
-  unsigned char get_node_code() const { return document_node; }
+  bson_node_type get_node_code() const override { return document_node; }
 
-  node_t copy() const { return node_t{new document(*this)}; }
+  node_t copy() const override { return node_t{new document(*this)}; }
 
   template <typename result_type>
   const result_type &get(const std::string &key,
                          const result_type &_default) const {
-    const node_type node_type_code =
-        static_cast<node_type>(type_converter<result_type>::node_type_code);
+    const bson_node_type node_type_code = static_cast<bson_node_type>(
+        type_converter<result_type>::node_type_code);
     typedef typename type_converter<result_type>::node_class node_class;
 
     auto founded = this->find(key);
@@ -510,9 +524,16 @@ public:
   const document &get(const std::string &key, const document &_default) const {
     auto founded = this->find(key);
     if ((founded != end()) &&
-        (founded->second->get_node_code() == document_node ||
-         founded->second->get_node_code() == array_node))
+        (founded->second->get_node_code() == document_node))
       return *reinterpret_cast<const document *>(founded->second.get());
+    else
+      return _default;
+  }
+
+  const array &get(const std::string &key, const array &_default) const {
+    auto founded = this->find(key);
+    if ((founded != end()) && (founded->second->get_node_code() == array_node))
+      return *reinterpret_cast<const array *>(founded->second.get());
     else
       return _default;
   }
@@ -563,6 +584,8 @@ public:
     return (*this);
   }
 
+  document &set(const std::string &key, array &&value);
+
   document &set(const std::string &key, std::string &&value) {
     this->erase(key);
     this->emplace(key, std::unique_ptr<string>(new string(std::move(value))));
@@ -576,14 +599,189 @@ public:
   }
 };
 
+class array
+    : protected std::vector<node_t>
+    , public node {
+public:
+  array() = default;
+
+  array(const array &rhs)
+      : std::vector<node_t>{}
+      , node{} {
+    std::vector<node_t>::reserve(rhs.size());
+    for (auto i = rhs.begin(); i != rhs.end(); i++) {
+      this->emplace_back((*i)->copy());
+    }
+  }
+
+  array(array &&rhs)
+      : std::vector<node_t>{std::move(rhs)} {};
+
+  array(const void *const buffer, size_t count) {
+    const unsigned char *byte_buffer =
+        reinterpret_cast<const unsigned char *>(buffer) + 4;
+    size_t deserializeCount = count - 4 - 1;
+    size_t position         = 0;
+
+    while (position < deserializeCount) {
+      bson_node_type type =
+          static_cast<bson_node_type>(byte_buffer[position++]);
+      std::string name(reinterpret_cast<const char *>(byte_buffer + position));
+
+      position += name.length() + 1;
+      node_t curNode = node::create(
+          type, byte_buffer + position, deserializeCount - position);
+
+      if (curNode != nullptr) {
+        position += curNode->get_serialized_size();
+        std::vector<node_t>::emplace_back(std::move(curNode));
+      } else
+        break;
+    }
+  }
+
+  size_t size() const { return std::vector<node_t>::size(); }
+
+  virtual void serialize(void *const  buffer,
+                         const size_t count) const override {
+    size_t serialized_size = get_serialized_size();
+
+    if (count >= serialized_size) {
+      *reinterpret_cast<int *>(buffer) = serialized_size;
+
+      int serializeCount = count - 4 - 1;
+
+      unsigned char *byte_buffer =
+          reinterpret_cast<unsigned char *>(buffer) + 4;
+      int position = 0;
+
+      int key = 0;
+      for (const_iterator i = std::vector<node_t>::begin();
+           i != std::vector<node_t>::end();
+           ++i, ++key) {
+        // Header
+        byte_buffer[position] = (*i)->get_node_code();
+        position++;
+        // Key
+        std::string keyS = std::to_string(key);
+        std::strcpy(reinterpret_cast<char *>(byte_buffer + position),
+                    keyS.c_str());
+        position += keyS.length() + 1;
+        // Value
+        (*i)->serialize(byte_buffer + position, serializeCount - position);
+        position += (*i)->get_serialized_size();
+      }
+
+      byte_buffer[this->get_serialized_size()] = 0;
+    }
+  }
+
+  virtual size_t get_serialized_size() const override {
+    size_t result = 4 + 1; // 4 for size and 1 is last
+
+    int count = 0;
+    for (auto i = std::vector<node_t>::begin(); i != std::vector<node_t>::end();
+         ++i, ++count) {
+      result +=
+          1 + std::to_string(count).length() + 1 + (*i)->get_serialized_size();
+    }
+
+    return result;
+  }
+
+  virtual void dump(std::ostream &stream) const override {
+    stream << "[ ";
+
+    for (auto i = std::vector<node_t>::begin(); i != std::vector<node_t>::end();
+         ++i) {
+      (*i)->dump(stream);
+
+      if (std::next(i) != std::vector<node_t>::end())
+        stream << ", ";
+    }
+
+    stream << " ]";
+  }
+
+  node_t copy() const override { return node_t{new array(*this)}; }
+
+  bson_node_type get_node_code() const override { return array_node; }
+
+  template <typename result_type>
+  result_type &at(int i) {
+    const bson_node_type node_type_code = static_cast<bson_node_type>(
+        type_converter<result_type>::node_type_code);
+    typedef typename type_converter<result_type>::node_class node_class;
+
+    node_t &curNode = std::vector<node_t>::at(i);
+    if (curNode->get_node_code() != node_type_code) {
+      throw std::bad_cast{};
+    }
+    return reinterpret_cast<node_class *>(curNode.get())->get_value();
+  }
+
+  template <typename result_type>
+  const result_type &at(int i) const {
+    const bson_node_type node_type_code = static_cast<bson_node_type>(
+        type_converter<result_type>::node_type_code);
+    typedef typename type_converter<result_type>::node_class node_class;
+
+    const node_t &curNode = std::vector<node_t>::at(i);
+    if (curNode->get_node_code() != node_type_code) {
+      throw std::bad_cast{};
+    }
+    return reinterpret_cast<const node_class *>(curNode.get())->get_value();
+  }
+
+  // we need copy the elements because it have to return array, not document
+  template <typename value_type>
+  array &push_back(const value_type &value) {
+    typedef typename type_converter<value_type>::node_class node_class;
+
+    std::vector<node_t>::emplace_back(node_t{new node_class(value)});
+    return (*this);
+  }
+
+  template <typename value_type>
+  array &push_back(value_type &&value) {
+    typedef typename type_converter<value_type>::node_class node_class;
+
+    std::vector<node_t>::emplace_back(node_t{new node_class(std::move(value))});
+    return (*this);
+  }
+
+  array &push_back(const char *value) {
+    std::vector<node_t>::emplace_back(node_t{new string(value)});
+    return (*this);
+  }
+
+  array &push_back() {
+    std::vector<node_t>::emplace_back(node_t{new null()});
+    return (*this);
+  }
+};
+
+inline document &document::set(const std::string &key, array &&value) {
+  this->erase(key);
+  this->emplace(key, std::unique_ptr<array>(new array(std::move(value))));
+  return *this;
+}
+
 template <>
 struct type_converter<document> {
   enum { node_type_code = document_node };
   typedef document node_class;
 };
 
-inline node_t
-node::create(node_type type, const void *const buffer, const size_t count) {
+template <>
+struct type_converter<array> {
+  enum { node_type_code = array_node };
+  typedef array node_class;
+};
+
+inline node_t node::create(bson_node_type    type,
+                           const void *const buffer,
+                           const size_t      count) {
   switch (type) {
   case null_node:
     return node_t{new null()};
@@ -594,8 +792,9 @@ node::create(node_type type, const void *const buffer, const size_t count) {
   case double_node:
     return node_t{new Double(buffer, count)};
   case document_node:
-  case array_node:
     return node_t{new document(buffer, count)};
+  case array_node:
+    return node_t{new array(buffer, count)};
   case string_node:
     return node_t{new string(buffer, count)};
   case binary_node:
