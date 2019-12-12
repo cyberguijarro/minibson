@@ -7,4 +7,4 @@ project(minibson)
 include(cmake/build.cmake)
 
 add_executable(test_0 test.cpp)
-target_compile_features(test_0 PRIVATE cxx_std_11)
+target_compile_features(test_0 PRIVATE cxx_std_17)

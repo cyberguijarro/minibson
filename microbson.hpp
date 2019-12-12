@@ -1,18 +1,18 @@
+// microbson.hpp
+
 #pragma once
 
-#include <cstddef>
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
-#include <iomanip>
-#include <iterator>
-#include <list>
+#include <stdexcept>
 #include <string>
-#include <utility>
-#include <vector>
+#include <string_view>
 
 namespace microbson {
-typedef unsigned char byte;
+using byte = uint8_t;
 
-enum node_type {
+enum BsonNodeType {
   double_node   = 0x01,
   string_node   = 0x02,
   document_node = 0x03,
@@ -25,341 +25,394 @@ enum node_type {
   unknown_node  = 0xFF
 };
 
-class document;
+// needed for prevent warning about enum compare
+bool operator==(BsonNodeType lhs, int rhs) {
+  return int(lhs) == rhs;
+}
+bool operator!=(BsonNodeType lhs, int rhs) {
+  return int(lhs) != rhs;
+}
 
-template <typename T>
-struct type_converter {};
+class Document;
+class Array;
+using Binary = std::pair<const void *, int32_t>;
+
+template <class T>
+struct type_traits {};
 
 template <>
-struct type_converter<double> {
+struct type_traits<double> {
   enum { node_type_code = double_node };
+  using value_type = double;
 };
 
 template <>
-struct type_converter<std::string> {
-  enum { node_type_code = string_node };
-};
-
-template <typename T>
-struct type_converter<std::vector<T>> {
-  enum { node_type_code = array_node };
+struct type_traits<float> {
+  enum { node_type_code = double_node };
+  using value_type = double;
 };
 
 template <>
-struct type_converter<document> {
-  enum { node_type_code = document_node };
-};
-
-template <>
-struct type_converter<void *> {
-  enum { node_type_code = binary_node };
-};
-
-template <>
-struct type_converter<bool> {
-  enum { node_type_code = boolean_node };
-};
-
-template <>
-struct type_converter<int> {
+struct type_traits<int32_t> {
   enum { node_type_code = int32_node };
+  using value_type = int32_t;
 };
 
 template <>
-struct type_converter<long long> {
+struct type_traits<int64_t> {
   enum { node_type_code = int64_node };
+  using value_type = int64_t;
 };
 
-struct node {
-  const byte *bytes_;
+template <>
+struct type_traits<std::string> {
+  enum { node_type_code = string_node };
+  using value_type = std::string;
+};
 
-  node()
-      : bytes_(NULL) {}
+template <>
+struct type_traits<std::string_view> {
+  enum { node_type_code = string_node };
+  using value_type = std::string_view;
+};
 
-  node(const byte *bytes)
-      : bytes_(bytes) {}
+template <>
+struct type_traits<bool> {
+  enum { node_type_code = boolean_node };
+  using value_type = bool;
+};
 
-  node_type get_type() const { return static_cast<node_type>(bytes_[0]); }
+template <>
+struct type_traits<void> {
+  enum { node_type_code = null_node };
+  using value_type = void;
+};
 
-  const char *get_name() const {
-    return reinterpret_cast<const char *>(bytes_ + 1);
+template <>
+struct type_traits<Array> {
+  enum { node_type_code = array_node };
+  using value_type = Array;
+};
+
+template <>
+struct type_traits<Document> {
+  enum { node_type_code = document_node };
+  using value_type = Document;
+};
+
+template <>
+struct type_traits<Binary> {
+  enum { node_type_code = binary_node };
+  using value_type = Binary;
+};
+
+class ParseException : public std::exception {
+public:
+  ParseException(std::string what)
+      : what_{std::move(what)} {}
+
+  const char *what() const noexcept override { return what_.c_str(); }
+
+private:
+  std::string what_;
+};
+
+class Node {
+public:
+  Node(const byte *data)
+      : data_{data} {}
+
+  BsonNodeType type() const noexcept {
+    return static_cast<BsonNodeType>(*data_);
   }
 
-  size_t get_size() const {
-    size_t result = 1U + strlen(get_name()) + 1U;
+  std::string_view name() const noexcept {
+    return std::string_view{reinterpret_cast<const char *>(data_) + 1};
+  }
 
-    switch (get_type()) {
+  /**\return binary length of the node. In case of some unexpected value return
+   * 0
+   */
+  int length() const noexcept {
+    int result = 1 /*type*/ + this->name().size() + 1 /*\0*/;
+
+    switch (type()) {
     case double_node:
       result += sizeof(double);
       break;
     case document_node:
     case array_node:
-      result += *reinterpret_cast<const int *>(bytes_ + result);
+      result += *reinterpret_cast<const int *>(data_ + result);
       break;
     case string_node:
-      result += (sizeof(int) + *reinterpret_cast<const int *>(bytes_ + result));
+      result += (sizeof(int) + *reinterpret_cast<const int *>(data_ + result));
       break;
     case binary_node:
       result +=
-          (sizeof(int) + *reinterpret_cast<const int *>(bytes_ + result) + 1U);
+          (sizeof(int) + *reinterpret_cast<const int *>(data_ + result) + 1);
       break;
     case boolean_node:
-      result += 1U;
+      result += 1;
     case null_node:
       break;
     case int32_node:
-      result += sizeof(int);
+      result += sizeof(int32_t);
       break;
     case int64_node:
-      result += sizeof(long long);
+      result += sizeof(int64_t);
       break;
-    default:
-      result = 0U;
+    case unknown_node:
+      result = 0;
       break;
-    }
+    };
 
     return result;
   }
 
-  const void *get_data() const { return bytes_ + 1U + strlen(get_name()) + 1U; }
+  /**\return value in current node
+   * \throw ParseException if can not convert
+   */
+  template <class ReturnType>
+  ReturnType value() const noexcept(false) {
+    using value_type = typename type_traits<ReturnType>::value_type;
 
-  bool valid(size_t size) const {
-    return (size >= 2) && (get_size() <= size) && get_size() != 0;
+    if (this->type() != type_traits<ReturnType>::node_type_code) {
+      throw ParseException{"invalid conversion"};
+    }
+
+    const byte *offset = data_ + 1 /*type*/ + this->name().size() + 1 /*\0*/;
+
+    if constexpr (std::is_same<value_type, Document>::value ||
+                  std::is_same<value_type, Array>::value) {
+      return value_type{offset, *reinterpret_cast<const int *>(offset)};
+    } else if constexpr (std::is_same<value_type, std::string>::value ||
+                         std::is_same<value_type, std::string_view>::value) {
+      return value_type{reinterpret_cast<const char *>(
+          offset + 4 /*+4 because string serialized with size*/)};
+    } else if constexpr (std::is_void<value_type>::value) {
+      return;
+    } else if constexpr (std::is_same<value_type, Binary>::value) {
+      return value_type{offset + 4 +
+                            1 /*+4 - size of buf, +1 - subtype of buf*/,
+                        *reinterpret_cast<const int *>(offset)};
+    } else {
+      return *reinterpret_cast<const value_type *>(offset);
+    }
   }
 
-  bool empty() const { return !bytes_; }
+private:
+  const byte *data_;
 };
 
-class document {
-private:
-  const byte *bytes_;
-
-  bool lookup(const char *name, node &result) const {
-    const byte *iterator = bytes_ + sizeof(int);
-    size_t      left     = size() - sizeof(int);
-    bool        found    = false;
-
-    result = node(iterator);
-
-    while (result.valid(left)) {
-      if (strcmp(result.get_name(), name) == 0) {
-        found = true;
-        break;
-      } else {
-        iterator += result.get_size();
-        left -= result.get_size();
-        result = node(iterator);
-      }
-    }
-
-    return found;
-  }
-
-  template <typename T, typename W>
-  T get(node _node) const {
-    return static_cast<T>(*reinterpret_cast<const W *>(_node.get_data()));
-  }
-
-  std::string get_string(const node &_node) const {
-    return std::string(reinterpret_cast<const char *>(_node.get_data()) +
-                           sizeof(int),
-                       *reinterpret_cast<const int *>(_node.get_data()) - 1);
-  }
-
-  template <typename T, typename W>
-  T get(const std::string &name, T _default) const {
-    node _node;
-
-    return lookup(name.c_str(), _node) ? get<T, W>(_node) : _default;
-  }
-
-  void dump(const node &_node, std::ostream &_stream) const {
-    switch (_node.get_type()) {
-    case double_node:
-      _stream << get<double, double>(_node);
-      break;
-    case string_node:
-      _stream << '"' << get_string(_node) << '"';
-      break;
-    case binary_node: {
-      const byte *bytes = reinterpret_cast<const byte *>(_node.get_data());
-      std::ios::fmtflags flags(_stream.flags());
-
-      _stream << std::hex << std::setw(2) << std::setfill('0');
-      copy(bytes + 5U,
-           bytes + 5U + *static_cast<const int *>(_node.get_data()),
-           std::ostream_iterator<int>(_stream));
-      _stream.flags(flags);
-      break;
-    }
-    case boolean_node:
-      _stream << (get<bool, byte>(_node) ? "true" : "false");
-      break;
-    case null_node:
-      _stream << "(null)";
-      break;
-    case int32_node:
-      _stream << get<int, int>(_node);
-      break;
-    case int64_node:
-      _stream << get<long long, long long>(_node);
-      break;
-    default:
-      break;
-    }
-  }
-
+class Document {
 public:
-  document()
-      : bytes_(NULL) {}
+  Document()
+      : data_{nullptr} {}
 
-  document(const void *bytes, size_t = 0)
-      : bytes_(reinterpret_cast<const byte *>(bytes)) {}
-
-  bool empty() const { return !bytes_; }
-
-  bool valid() const {
-    return bytes_ && (size() >= 7U) && (bytes_[size() - 1] == 0);
+  /**\param data pointer to serialized bson data
+   * \param length size of bson data. Not required, needed for validation
+   * \throw ParseException if data isn't `nullptr`, size set and validation
+   * failed
+   */
+  Document(const void *data, int length)
+      : data_{reinterpret_cast<const byte *>(data)} {
+    if (data_ && !this->valid(length)) {
+      throw ParseException{"not valid bson"};
+    }
   }
 
-  size_t size() const {
-    if (bytes_) {
-      return *reinterpret_cast<const int *>(bytes_);
+  /**\brief valid bson document have to have size >= 7, encode own size in
+   * first four bytes and last symbol have to be \0
+   */
+  bool valid(int length) const noexcept {
+    return length >= 7 && this->length() == length && data_[length - 1] == '\0';
+  }
+
+  bool empty() const noexcept { return !data_; }
+
+  /**\return binary length of the document
+   */
+  int length() const noexcept {
+    if (data_) {
+      return *reinterpret_cast<const int *>(data_);
     } else {
       return 0;
     }
   }
 
-  double get(const std::string &name, double _default) const {
-    return get<double, double>(name, _default);
-  }
-
-  std::string get(const std::string &name, const std::string &_default) const {
-    std::string result;
-    node        _node;
-
-    bool found = lookup(name.c_str(), _node);
-    if (found) {
-      result = get_string(_node);
-    } else {
-      result = _default;
-    }
-
-    return result;
-  }
-
-  std::string get(const std::string &name, const char *default_) const {
-    std::string result;
-    node        node;
-
-    bool found = lookup(name.c_str(), node);
-    if (found) {
-      result = get_string(node);
-    } else {
-      result = default_;
-    }
-
-    return result;
-  }
-
-  document get(const std::string &name, const document &_default) const {
-    node     _node;
-    bool     found = lookup(name.c_str(), _node);
-    document result(_default);
-
-    if (found) {
-      result = document(_node.get_data());
-    }
-
-    return result;
-  }
-
-  std::pair<const void *, size_t> get(const std::string &name) const {
-    node                            _node;
-    bool                            found = lookup(name.c_str(), _node);
-    std::pair<const void *, size_t> result(NULL, 0U);
-
-    if (found) {
-      result.second = *reinterpret_cast<const int *>(_node.get_data());
-      result.first  = reinterpret_cast<const byte *>(_node.get_data()) + 5U;
-    }
-
-    return result;
-  }
-
-  bool get(const std::string &name, bool _default) const {
-    return get<bool, byte>(name, _default);
-  }
-
-  int get(const std::string &name, int _default) const {
-    return get<int, int>(name, _default);
-  }
-
-  long long get(const std::string &name, long long _default) const {
-    return get<long long, long long>(name, _default);
-  }
-
-  void dump(std::ostream &_stream) const {
-    const byte *iterator = bytes_ + sizeof(int);
-    size_t      left     = size() - sizeof(int);
-    node        _node(iterator);
-
-    _stream << "{ ";
-
-    while (_node.valid(left)) {
-      _stream << _node.get_name() << " : ";
-
-      if (_node.get_type() == document_node || _node.get_type() == array_node)
-        document(_node.get_data(), *static_cast<const int *>(_node.get_data()))
-            .dump(_stream);
-      else
-        dump(_node, _stream);
-
-      size_t size = _node.get_size();
-      iterator += size;
-      left -= size;
-      _node = node(iterator);
-
-      if (_node.valid(left))
-        _stream << ", ";
-    }
-
-    _stream << " }";
-  }
-
-  /**\brief just return keys in the document
-   * \todo add iterator and remove the method
+  /**\return capacity of nodes in the document
    */
-  std::list<std::string> keys() const {
-    std::list<std::string> retval;
+  int size() const noexcept;
 
-    const byte *iterator = bytes_ + sizeof(int);
-    size_t      left     = size() - sizeof(int);
-    node        node(iterator);
-    while (node.valid(left)) {
-      retval.emplace_back(node.get_name());
-      size_t size = node.get_size();
-      iterator += size;
-      left -= size;
-      node = microbson::node{iterator};
+  /**\brief forward iterator
+   */
+  class ConstIterator final {
+    friend Document;
+
+  public:
+    ConstIterator()
+        : offset_{nullptr} {}
+
+    ConstIterator &operator++() noexcept {
+      // TODO implement this
+      offset_ += Node{offset_}.length();
+      return *this;
     }
 
-    return retval;
-  }
+    bool operator==(const ConstIterator &rhs) const noexcept {
+      return this->offset_ == rhs.offset_;
+    }
 
-  bool contains(const std::string &name) const {
-    node _node;
+    bool operator!=(const ConstIterator &rhs) const noexcept {
+      return this->offset_ != rhs.offset_;
+    }
 
-    return lookup(name.c_str(), _node);
-  }
+    Node operator*() noexcept { return Node{offset_}; }
 
-  template <typename T>
-  bool contains(const std::string &name) const {
-    node _node;
-    bool found = lookup(name.c_str(), _node);
+  private:
+    /**\param toEnd move iterator to end of current document
+     */
+    ConstIterator(const byte *data, bool toEnd = false)
+        : offset_{nullptr} {
+      if (data) {
+        if (toEnd) {
+          offset_ = data + *reinterpret_cast<const int *>(data) -
+                    1; // -1 because last element is \0
+        } else {
+          offset_ = data + sizeof(int); // move offset to first element
+        }
+      }
+    }
 
-    return (found && (static_cast<int>(_node.get_type()) ==
-                      static_cast<int>(type_converter<T>::node_type_code)));
-  }
+  private:
+    const byte *offset_;
+  };
+
+  ConstIterator begin() const noexcept { return ConstIterator{data_}; }
+
+  ConstIterator end() const noexcept { return ConstIterator{data_, true}; }
+
+  template <class ValueType>
+  bool contains(std::string_view key) const noexcept;
+
+  /**\brief same as template function contains, but not check type
+   */
+  bool contains(std::string_view key) const noexcept;
+
+  /**\throw ParseException if value not found or if value have different type
+   * \brief this safely function for get value from bson array by index, BUT!:
+   * this is very slowly. Use iterator where ever it possible
+   */
+  template <class ValueType>
+  ValueType get(std::string_view key) const noexcept(false);
+
+private:
+  const byte *data_;
 };
+
+class Array final : public Document {
+public:
+  using Document::Document;
+
+  /**\throw ParseException if no value by index `i`
+   * \brief this safely function for get value from bson array by index, BUT!:
+   * this is very slowly. Use iterator where ever it possible
+   */
+  template <class ReturnType>
+  ReturnType at(int i) const noexcept(false);
+
+  template <class T>
+  bool contains(std::string_view) const noexcept = delete;
+
+  template <class T>
+  T get(std::string_view) const = delete;
+
+private:
+  const byte *data_;
+};
+} // namespace microbson
+
+namespace std {
+template <>
+struct iterator_traits<microbson::Document::ConstIterator> {
+  using iterator_category = std::forward_iterator_tag;
+  using value_type        = microbson::Node;
+  using difference_type   = std::ptrdiff_t;
+};
+} // namespace std
+
+namespace microbson {
+inline int Document::size() const noexcept {
+  return std::distance(this->begin(), this->end());
+}
+
+template <class ValueType>
+bool Document::contains(std::string_view key) const noexcept {
+  if (auto found = std::find_if(
+          this->begin(),
+          this->end(),
+          [key](Node node) {
+            if (node.name() ==
+                key) { // we not need check here, because in bson can not
+                       // contains two or more values with same key
+              return true;
+            }
+
+            return false;
+          });
+      found != this->end()) {
+    if ((*found).type() == type_traits<ValueType>::node_type_code) {
+      return true; // only with same key and type
+    }
+  }
+
+  return false;
+}
+
+bool Document::contains(std::string_view key) const noexcept {
+  if (auto found = std::find_if(this->begin(),
+                                this->end(),
+                                [key](Node node) {
+                                  if (node.name() == key) {
+                                    return true;
+                                  }
+
+                                  return false;
+                                });
+      found != this->end()) {
+    return true;
+  }
+
+  return false;
+}
+
+template <class ReturnType>
+ReturnType Document::get(std::string_view key) const {
+  if (auto found = std::find_if(this->begin(),
+                                this->end(),
+                                [key](Node node) {
+                                  if (node.name() == key) {
+                                    return true;
+                                  }
+
+                                  return false;
+                                });
+      found != this->end()) {
+    return (*found).template value<ReturnType>();
+  } else {
+    throw ParseException{"out of range"};
+  }
+}
+
+template <class ReturnType>
+ReturnType Array::at(int i) const {
+  auto iter = this->begin();
+  for (int counter = 0; iter != this->end() && counter < i; ++iter, ++counter)
+    ;
+  if (iter != this->end()) {
+    return (*iter).template value<ReturnType>();
+  } else {
+    throw ParseException{"out of range"};
+  }
+}
 } // namespace microbson
