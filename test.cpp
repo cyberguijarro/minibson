@@ -7,27 +7,41 @@
 
 #define SOME_BUF_STR "some buf str"
 
+#define CHECK_EXCEPT(x, type)                                                  \
+  {                                                                            \
+    try {                                                                      \
+      x;                                                                       \
+      assert(false);                                                           \
+    } catch (type &) {                                                         \
+    }                                                                          \
+  }
+
 int main() {
-  // create document for test
-  minibson::document d;
+  // create document for testing
+  minibson::Document d;
 
   d.set("int32", 1);
   d.set("int64", 140737488355328LL);
   d.set("float", 30.20);
-  d.set("string", "text");
-  d.set("binary",
-        minibson::binary::buffer(&SOME_BUF_STR, sizeof(SOME_BUF_STR)));
+  d.set("string", std::string{"text"});
+  d.set("binary", minibson::Binary(&SOME_BUF_STR, sizeof(SOME_BUF_STR)));
   d.set("boolean", true);
-  d.set("document", minibson::document().set("a", 3).set("b", 4));
-  d.set("some_other_string", "some_other_text");
+  d.set("document", minibson::Document().set("a", 3).set("b", 4));
+  d.set("some_other_string", std::string{"some_other_text"});
   d.set("null");
-  d.set("array", minibson::array{}.push_back(0).push_back(1));
+  d.set("array", minibson::Array{}.push_back(0).push_back(1));
 
-  int   length = d.get_serialized_size();
+  d.set("some_value_for_change", 10);
+  assert(d.get<int>("some_value_for_change") == 10);
+  d.set("some_value_for_change", std::string("some_string"));
+  assert(d.get<std::string>("some_value_for_change") == "some_string");
+  d.erase("some_value_for_change");
+
+  int   length = d.getSerializedSize();
   char *buffer = new char[length];
   d.serialize(buffer, length);
 
-  // test
+  // test microbson
   microbson::Document doc{buffer, length};
 
   assert(!doc.empty());
@@ -55,6 +69,7 @@ int main() {
   assert(doc.contains<void>("null"));
   assert(doc.contains<microbson::Array>("array"));
   assert(doc.contains<microbson::Binary>("binary"));
+  assert(doc.contains<int>("not exists") == false);
 
   assert(doc.get<int32_t>("int32") == 1);
   assert(doc.get<int64_t>("int64") == 140737488355328LL);
@@ -64,6 +79,8 @@ int main() {
   assert(doc.get<std::string_view>("string") == "text");
   assert(doc.get<bool>("boolean") == true);
   assert(std::is_void<decltype(doc.get<void>("null"))>::value);
+  CHECK_EXCEPT(doc.get<int>("not exists"), bson::OutOfRange);
+  CHECK_EXCEPT(doc.get<int>("string"), bson::BadCast);
 
   microbson::Document nestedDoc = doc.get<microbson::Document>("document");
   assert(nestedDoc.size() == 2);
@@ -74,6 +91,7 @@ int main() {
   assert(a.size() == 2);
   assert(a.at<int32_t>(0) == 0);
   assert(a.at<int32_t>(1) == 1);
+  CHECK_EXCEPT(a.at<int>(2), bson::OutOfRange);
 
   microbson::Binary binary = doc.get<microbson::Binary>("binary");
   assert(binary.first != nullptr);

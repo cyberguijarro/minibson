@@ -1,17 +1,24 @@
+// minibson.hpp
+
 #pragma once
 
+#include "microbson.hpp"
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <memory>
-#include <ostream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#define MEMORY_ERROR "not enough memory in buffer"
+
 namespace minibson {
+using byte = uint8_t;
 
-// Basic types
-
-enum bson_node_type {
+enum BsonNodeType {
   double_node   = 0x01,
   string_node   = 0x02,
   document_node = 0x03,
@@ -24,787 +31,583 @@ enum bson_node_type {
   unknown_node  = 0xFF
 };
 
-// for prevent enum compare warning
-bool operator==(bson_node_type lhs, int rhs) {
-  return int(lhs) == int(rhs);
+// needed for prevent warning about enum compare
+bool operator==(BsonNodeType lhs, int rhs) {
+  return int(lhs) == rhs;
+}
+bool operator!=(BsonNodeType lhs, int rhs) {
+  return int(lhs) != rhs;
 }
 
-bool operator!=(bson_node_type lhs, int rhs) {
-  return int(lhs) != int(rhs);
-}
+class Document;
+class Array;
+class Binary;
 
-template <typename T>
-struct type_converter {};
-
-class node;
-
-using node_t = std::unique_ptr<minibson::node>;
-
-class node {
-public:
-  node() = default;
-  virtual ~node() {}
-  virtual void   serialize(void *const buffer, const size_t count) const = 0;
-  virtual size_t get_serialized_size() const                             = 0;
-  virtual bson_node_type get_node_code() const                           = 0;
-  virtual node_t         copy() const                                    = 0;
-  virtual void           dump(std::ostream &) const                      = 0;
-  virtual void           dump(std::ostream &stream, int) const { dump(stream); }
-  static node_t
-  create(bson_node_type type, const void *const buffer, const size_t count);
-
-  node(const node &) = delete;
-  node &operator=(const node &) = delete;
-  node &operator=(node &&) = default;
-};
-
-// Value types
-
-class null : public node {
-public:
-  null() {}
-
-  null(const void *const, const size_t) {}
-
-  void serialize(void *const, const size_t) const override {}
-
-  size_t get_serialized_size() const override { return 0; }
-
-  bson_node_type get_node_code() const override { return null_node; }
-
-  node_t copy() const override { return node_t{}; }
-
-  void dump(std::ostream &stream) const override { stream << "null"; };
-};
-
-template <typename T, bson_node_type N>
-class scalar : public node {
-private:
-  T value_;
-
-public:
-  scalar(const T value)
-      : value_(value) {}
-
-  scalar(const void *const buffer, const size_t count = 0) {
-    (void)count;
-    value_ = *reinterpret_cast<const T *>(buffer);
-  };
-
-  void serialize(void *const buffer, const size_t count = 0) const override {
-    (void)count;
-    *reinterpret_cast<T *>(buffer) = value_;
-  }
-
-  size_t get_serialized_size() const override { return sizeof(T); }
-
-  bson_node_type get_node_code() const override { return N; }
-
-  node_t copy() const override { return node_t{new scalar<T, N>(value_)}; }
-
-  void dump(std::ostream &stream) const override { stream << value_; };
-
-  const T &get_value() const { return value_; }
-};
-
-class int32 : public scalar<int, int32_node> {
-public:
-  int32(const int value)
-      : scalar<int, int32_node>(value) {}
-
-  int32(const void *const buffer, const size_t count)
-      : scalar<int, int32_node>(buffer, count){};
-};
+template <class T>
+struct type_traits {};
 
 template <>
-struct type_converter<int> {
-  enum { node_type_code = int32_node };
-  typedef int32 node_class;
-};
-
-class int64 : public scalar<long long int, int64_node> {
-public:
-  int64(const long long int value)
-      : scalar<long long int, int64_node>(value) {}
-
-  int64(const void *const buffer, const size_t count)
-      : scalar<long long int, int64_node>(buffer, count){};
-};
-
-template <>
-struct type_converter<long long int> {
-  enum { node_type_code = int64_node };
-  typedef int64 node_class;
-};
-
-class Double : public scalar<double, double_node> {
-public:
-  Double(const double value)
-      : scalar<double, double_node>(value) {}
-
-  Double(const void *const buffer, const size_t count)
-      : scalar<double, double_node>(buffer, count){};
-};
-
-template <>
-struct type_converter<double> {
+struct type_traits<double> {
   enum { node_type_code = double_node };
-  typedef Double node_class;
-};
-
-class string : public node {
-private:
-  std::string value_;
-
-public:
-  explicit string(const std::string &value)
-      : value_(value) {}
-  explicit string(std::string &&value)
-      : value_{std::move(value)} {}
-
-  string(const void *const buffer, const size_t count) {
-    if (count >= 5) {
-      const size_t max    = count - sizeof(unsigned int);
-      const size_t actual = *reinterpret_cast<const unsigned int *>(buffer);
-
-      value_.assign(reinterpret_cast<const char *>(buffer) +
-                        sizeof(unsigned int),
-                    std::min(actual, max) - 1);
-    }
-  };
-
-  void serialize(void *const                   buffer,
-                 [[maybe_unused]] const size_t count) const override {
-    *reinterpret_cast<unsigned int *>(buffer) = value_.length() + 1;
-    std::memcpy(reinterpret_cast<char *>(buffer) + sizeof(unsigned int),
-                value_.c_str(),
-                value_.length());
-    *(reinterpret_cast<char *>(buffer) + get_serialized_size() - 1) = '\0';
-  }
-
-  size_t get_serialized_size() const override {
-    return sizeof(unsigned int) + value_.length() + 1;
-  }
-
-  bson_node_type get_node_code() const override { return string_node; }
-
-  node_t copy() const override { return node_t{new string(value_)}; }
-
-  void dump(std::ostream &stream) const override {
-    stream << "\"" << value_ << "\"";
-  };
-
-  const std::string &get_value() const { return value_; }
+  using value_type = double;
 };
 
 template <>
-struct type_converter<std::string> {
+struct type_traits<float> {
+  enum { node_type_code = double_node };
+  using value_type = double;
+};
+
+template <>
+struct type_traits<int32_t> {
+  enum { node_type_code = int32_node };
+  using value_type = int32_t;
+};
+
+template <>
+struct type_traits<int64_t> {
+  enum { node_type_code = int64_node };
+  using value_type = int64_t;
+};
+
+template <>
+struct type_traits<long long int> {
+  enum { node_type_code = int64_node };
+  using value_type = int64_t;
+};
+
+template <>
+struct type_traits<std::string> {
   enum { node_type_code = string_node };
-  typedef string node_class;
-};
-
-class boolean : public node {
-private:
-  bool value_;
-
-public:
-  explicit boolean(const bool value)
-      : value_(value) {}
-
-  boolean(const void *const buffer, const size_t count = 0) {
-    (void)count;
-    switch (*reinterpret_cast<const unsigned char *>(buffer)) {
-    case 1:
-      value_ = true;
-      break;
-    default:
-      value_ = false;
-      break;
-    }
-  };
-
-  void serialize(void *const buffer, const size_t count = 0) const override {
-    (void)count;
-    *reinterpret_cast<unsigned char *>(buffer) = value_ ? true : false;
-  }
-
-  size_t get_serialized_size() const override { return 1; }
-
-  bson_node_type get_node_code() const override { return boolean_node; }
-
-  node_t copy() const override { return node_t{new boolean(value_)}; }
-
-  void dump(std::ostream &stream) const override {
-    stream << (value_ ? "true" : "false");
-  };
-
-  const bool &get_value() const { return value_; }
+  using value_type = std::string;
 };
 
 template <>
-struct type_converter<bool> {
+struct type_traits<std::string_view> {
+  enum { node_type_code = string_node };
+  using value_type = std::string;
+};
+
+template <>
+struct type_traits<char *> {
+  enum { node_type_code = string_node };
+  using value_type = std::string;
+};
+
+template <>
+struct type_traits<const char *> {
+  enum { node_type_code = string_node };
+  using value_type = std::string;
+};
+
+template <>
+struct type_traits<bool> {
   enum { node_type_code = boolean_node };
-  typedef boolean node_class;
-};
-
-class binary : public node {
-public:
-  struct buffer {
-    buffer()                  = default;
-    buffer(const buffer &rhs) = default;
-    buffer &operator=(const buffer &rhs) = default;
-    buffer(buffer &&rhs)
-        : data{std::move(rhs.data)} {
-      rhs.data = {};
-    }
-    buffer &operator=(buffer &&rhs) {
-      this->data = std::move(rhs.data);
-      rhs.data   = {};
-      return *this;
-    }
-    explicit buffer(std::vector<uint8_t> &&rhs)
-        : data{rhs} {}
-
-    buffer(const void *buf, size_t length)
-        : data(length) {
-      std::memcpy(data.data(), buf, length);
-    }
-
-    void dump(std::ostream &stream) const {
-      stream << "<binary: " << data.size() << " bytes>";
-    };
-
-    std::vector<uint8_t> data;
-  };
-
-private:
-  buffer value_;
-
-public:
-  explicit binary(const buffer &buf)
-      : value_{buf} {}
-
-  explicit binary(buffer &&buf)
-      : value_{std::move(buf)} {}
-
-  /**\brief if flag create set to true, then create new buffer from input data
-   * (buffer, count). Otherwise deserialize bson data from buffer
-   */
-  binary(const void *const buf, const size_t count, const bool create = false)
-      : value_{} {
-    const unsigned char *byte_buffer =
-        reinterpret_cast<const unsigned char *>(buf);
-
-    if (create) {
-      value_.data.resize(count);
-      std::memcpy(value_.data.data(), byte_buffer, value_.data.size());
-    } else {
-      size_t length = *reinterpret_cast<const int *>(byte_buffer);
-      value_.data.resize(length);
-      std::memcpy(value_.data.data(), byte_buffer + 5, length);
-    }
-  };
-
-  void serialize(void *const buf, const size_t count = 0) const override {
-    (void)count;
-    unsigned char *byte_buffer = reinterpret_cast<unsigned char *>(buf);
-
-    *reinterpret_cast<int *>(byte_buffer) = value_.data.size();
-    std::memcpy(
-        byte_buffer + sizeof(uint) + 1, value_.data.data(), value_.data.size());
-  }
-
-  size_t get_serialized_size() const override {
-    return sizeof(uint) + 1 + value_.data.size();
-  }
-
-  bson_node_type get_node_code() const override { return binary_node; }
-
-  node_t copy() const override { return node_t{new binary(value_)}; }
-
-  void dump(std::ostream &stream) const override { value_.dump(stream); };
-
-  const buffer &get_value() const { return value_; }
+  using value_type = bool;
 };
 
 template <>
-struct type_converter<binary::buffer> {
+struct type_traits<void> {
+  enum { node_type_code = null_node };
+  using value_type = void;
+};
+
+template <>
+struct type_traits<Array> {
+  enum { node_type_code = array_node };
+  using value_type = Array;
+};
+
+template <>
+struct type_traits<Document> {
+  enum { node_type_code = document_node };
+  using value_type = Document;
+};
+
+template <>
+struct type_traits<Binary> {
   enum { node_type_code = binary_node };
-  typedef binary node_class;
+  using value_type = Binary;
 };
 
-// Composite types
-
-class element_list
-    : protected std::map<std::string, node_t>
-    , public node {
+class NodeValue {
 public:
-  typedef std::map<std::string, node_t>::const_iterator const_iterator;
+  virtual ~NodeValue() = default;
 
-  element_list() {}
-
-  element_list(const element_list &other)
-      : std::map<std::string, node_t>{}
-      , node{} {
-    for (const_iterator i = other.begin(); i != other.end(); i++) {
-      this->emplace(i->first, i->second->copy());
-    }
-  }
-
-  element_list(element_list &&rhs)
-      : std::map<std::string, node_t>{std::move(rhs)} {}
-
-  element_list &operator=(element_list &&rhs) = default;
-
-  element_list(const void *const buffer, const size_t count) {
-    const unsigned char *byte_buffer =
-        reinterpret_cast<const unsigned char *>(buffer);
-    size_t position = 0;
-
-    while (position < count) {
-      bson_node_type type =
-          static_cast<bson_node_type>(byte_buffer[position++]);
-      std::string name(reinterpret_cast<const char *>(byte_buffer + position));
-
-      position += name.length() + 1;
-      node_t curNode =
-          node::create(type, byte_buffer + position, count - position);
-
-      if (curNode != nullptr) {
-        position += curNode->get_serialized_size();
-        this->emplace(name, std::move(curNode));
-      } else
-        break;
-    }
-  }
-
-  void serialize(void *const buffer, const size_t count) const {
-    unsigned char *byte_buffer = reinterpret_cast<unsigned char *>(buffer);
-    int            position    = 0;
-
-    for (const_iterator i = begin(); i != end(); i++) {
-      // Header
-      byte_buffer[position] = i->second->get_node_code();
-      position++;
-      // Key
-      std::strcpy(reinterpret_cast<char *>(byte_buffer + position),
-                  i->first.c_str());
-      position += i->first.length() + 1;
-      // Value
-      i->second->serialize(byte_buffer + position, count - position);
-      position += i->second->get_serialized_size();
-    }
-  }
-
-  size_t get_serialized_size() const {
-    size_t result = 0;
-
-    for (const_iterator i = begin(); i != end(); i++)
-      result += 1 + i->first.length() + 1 + i->second->get_serialized_size();
-
-    return result;
-  }
-
-  void dump(std::ostream &stream) const {
-    stream << "{ ";
-
-    for (const_iterator i = begin(); i != end(); i++) {
-      stream << "\"" << i->first << "\": ";
-      i->second->dump(stream);
-
-      if (std::next(i) != end())
-        stream << ", ";
-    }
-
-    stream << " }";
-  }
-
-  void dump(std::ostream &stream, const int level) const {
-    stream << "{ ";
-
-    for (const_iterator i = begin(); i != end(); i++) {
-      stream << std::endl;
-
-      for (int j = 0; j < level + 1; j++)
-        stream << "\t";
-
-      stream << "\"" << i->first << "\": ";
-      i->second->dump(stream, level + 1);
-
-      if (++i != end())
-        stream << ", ";
-      --i;
-    }
-
-    stream << std::endl;
-
-    for (int j = 0; j < level; j++)
-      stream << "\t";
-
-    stream << "}";
-  }
-
-  const_iterator begin() const {
-    return std::map<std::string, node_t>::begin();
-  }
-
-  const_iterator end() const { return std::map<std::string, node_t>::end(); }
-
-  bool contains(const std::string &key) const {
-    return (std::map<std::string, node_t>::find(key) != end());
-  }
-
-  template <typename T>
-  bool contains(const std::string &key) const {
-    const_iterator position = std::map<std::string, node_t>::find(key);
-    return (position != end()) && (position->second->get_node_code() ==
-                                   type_converter<T>::node_type_code);
-  }
-
-  ~element_list() {}
-};
-
-class array;
-
-class document : public element_list {
-public:
-  document() = default;
-
-  document(const document &) = default;
-  document(document &&)      = default;
-
-  document &operator=(document &&) = default;
-
-  document(const void *const buffer, [[maybe_unused]] const size_t count = 0)
-      : element_list(reinterpret_cast<const unsigned char *>(buffer) + 4,
-                     *reinterpret_cast<const int *>(buffer) - 4 - 1) {}
-
-  void serialize(void *const buffer, const size_t count) const override {
-    size_t serialized_size = get_serialized_size();
-
-    if (count >= serialized_size) {
-      unsigned char *byte_buffer = reinterpret_cast<unsigned char *>(buffer);
-
-      *reinterpret_cast<int *>(buffer) = serialized_size;
-      element_list::serialize(byte_buffer + 4, count - 4 - 1);
-      byte_buffer[4 + element_list::get_serialized_size()] = 0;
-    }
-  }
-
-  std::vector<uint8_t> serialize() const {
-    std::vector<uint8_t> retval(this->get_serialized_size());
-    *reinterpret_cast<int *>(retval.data()) = retval.size();
-    element_list::serialize(retval.data() + 4, retval.size() - 4 - 1);
-    *reinterpret_cast<char *>(retval.data() + retval.size() - 1) = 0;
-    return retval;
-  }
-
-  size_t get_serialized_size() const override {
-    return 4 + element_list::get_serialized_size() + 1;
-  }
-
-  bson_node_type get_node_code() const override { return document_node; }
-
-  node_t copy() const override { return node_t{new document(*this)}; }
-
-  template <typename result_type>
-  const result_type &get(const std::string &key,
-                         const result_type &_default) const {
-    const bson_node_type node_type_code = static_cast<bson_node_type>(
-        type_converter<result_type>::node_type_code);
-    typedef typename type_converter<result_type>::node_class node_class;
-
-    auto founded = this->find(key);
-    if ((founded != end()) &&
-        (founded->second->get_node_code() == node_type_code))
-      return reinterpret_cast<const node_class *>(founded->second.get())
-          ->get_value();
-    else
-      return _default;
-  }
-
-  const document &get(const std::string &key, const document &_default) const {
-    auto founded = this->find(key);
-    if ((founded != end()) &&
-        (founded->second->get_node_code() == document_node))
-      return *reinterpret_cast<const document *>(founded->second.get());
-    else
-      return _default;
-  }
-
-  const array &get(const std::string &key, const array &_default) const {
-    auto founded = this->find(key);
-    if ((founded != end()) && (founded->second->get_node_code() == array_node))
-      return *reinterpret_cast<const array *>(founded->second.get());
-    else
-      return _default;
-  }
-
-  /**\return by value, because here _default type is pointer to char, so we can
-   * not return reference
+  virtual BsonNodeType type() const noexcept = 0;
+  /**\param buf where will be writed data
+   * \param length max capacity of bytes for serialization
+   * \return capacity of serialized bytes
+   * \throw error if can not serialize the data
    */
-  std::string get(const std::string &key, const char *_default) const {
-    auto founded = this->find(key);
-    if ((founded != end()) && (founded->second->get_node_code() == string_node))
-      return reinterpret_cast<const string *>(founded->second.get())
-          ->get_value();
-    else
-      return std::string(_default);
-  }
+  virtual int serialize(void *buf, int length) const noexcept(false) = 0;
 
-  template <typename value_type>
-  document &set(const std::string &key, const value_type &value) {
-    typedef typename type_converter<value_type>::node_class node_class;
-
-    this->erase(key);
-    this->emplace(key, node_t{new node_class(value)});
-    return (*this);
-  }
-
-  document &set(const std::string &key, const char *value) {
-    this->erase(key);
-    this->emplace(key, node_t{new string(value)});
-    return (*this);
-  }
-
-  document &set(const std::string &key, const document &value) {
-    this->erase(key);
-    this->emplace(key, value.copy());
-    return (*this);
-  }
-
-  document &set(const std::string &key) {
-    this->erase(key);
-    this->emplace(key, node_t{new null()});
-    return (*this);
-  }
-
-  document &set(const std::string &key, document &&value) {
-    this->erase(key);
-    this->emplace(key,
-                  std::unique_ptr<document>(new document(std::move(value))));
-    return (*this);
-  }
-
-  document &set(const std::string &key, array &&value);
-
-  document &set(const std::string &key, std::string &&value) {
-    this->erase(key);
-    this->emplace(key, std::unique_ptr<string>(new string(std::move(value))));
-    return (*this);
-  }
-
-  document &set(const std::string &key, binary::buffer &&value) {
-    this->erase(key);
-    this->emplace(key, std::unique_ptr<binary>(new binary(std::move(value))));
-    return (*this);
-  }
+  /**\return count of bytes, needed for serialization
+   */
+  virtual int getSerializedSize() const noexcept = 0;
 };
 
-class array
-    : protected std::vector<node_t>
-    , public node {
+using UNodeValue = std::unique_ptr<NodeValue>;
+
+template <class T>
+class NodeValueT final : public NodeValue {
 public:
-  array() = default;
+  using value_type = typename type_traits<T>::value_type;
 
-  array(const array &rhs)
-      : std::vector<node_t>{}
-      , node{} {
-    std::vector<node_t>::reserve(rhs.size());
-    for (auto i = rhs.begin(); i != rhs.end(); i++) {
-      this->emplace_back((*i)->copy());
+  explicit NodeValueT(const T &val)
+      : val_{val} {}
+  explicit NodeValueT(T &&val)
+      : val_{std::move(val)} {}
+
+  BsonNodeType type() const noexcept override {
+    return static_cast<BsonNodeType>(type_traits<T>::node_type_code);
+  }
+
+  const value_type &value() const noexcept { return val_; }
+  value_type &      value() noexcept { return val_; }
+
+  int getSerializedSize() const noexcept {
+    if constexpr (std::is_same<value_type, std::string>::value) {
+      return 4 /*size*/ + val_.size() + 1 /*\0*/;
+    } else if constexpr (std::is_same<value_type, Array>::value ||
+                         std::is_same<value_type, Document>::value ||
+                         std::is_same<value_type, Binary>::value) {
+      return val_.getSerializedSize();
+    } else if constexpr (std::is_same<value_type, bool>::value) {
+      return 1;
+    } else {
+      return sizeof(val_);
+    }
+  };
+
+  int serialize(void *buf, int length) const override {
+    if (length < getSerializedSize()) {
+      throw bson::InvalidArgument{MEMORY_ERROR};
+    }
+
+    if constexpr (std::is_same<value_type, std::string>::value) {
+      *reinterpret_cast<int *>(buf) = val_.size() + 1 /*\0*/;
+      char *ptr = reinterpret_cast<char *>(buf) + 4 /*size*/;
+      std::strcpy(ptr, val_.c_str());
+      return 4 /*size*/ + val_.size() + 1 /*\0*/;
+    } else if constexpr (std::is_same<value_type, Array>::value ||
+                         std::is_same<value_type, Document>::value ||
+                         std::is_same<value_type, Binary>::value) {
+      return val_.serialize(buf, length);
+    } else if constexpr (std::is_same<value_type, bool>::value) {
+      *reinterpret_cast<byte *>(buf) = val_;
+      return 1;
+    } else {
+      *reinterpret_cast<value_type *>(buf) = val_;
+      return sizeof(val_);
     }
   }
 
-  array(array &&rhs)
-      : std::vector<node_t>{std::move(rhs)} {};
-
-  array(const void *const buffer, size_t count) {
-    const unsigned char *byte_buffer =
-        reinterpret_cast<const unsigned char *>(buffer) + 4;
-    size_t deserializeCount = count - 4 - 1;
-    size_t position         = 0;
-
-    while (position < deserializeCount) {
-      bson_node_type type =
-          static_cast<bson_node_type>(byte_buffer[position++]);
-      std::string name(reinterpret_cast<const char *>(byte_buffer + position));
-
-      position += name.length() + 1;
-      node_t curNode = node::create(
-          type, byte_buffer + position, deserializeCount - position);
-
-      if (curNode != nullptr) {
-        position += curNode->get_serialized_size();
-        std::vector<node_t>::emplace_back(std::move(curNode));
-      } else
-        break;
-    }
-  }
-
-  size_t size() const { return std::vector<node_t>::size(); }
-
-  virtual void serialize(void *const  buffer,
-                         const size_t count) const override {
-    size_t serialized_size = get_serialized_size();
-
-    if (count >= serialized_size) {
-      *reinterpret_cast<int *>(buffer) = serialized_size;
-
-      int serializeCount = count - 4 - 1;
-
-      unsigned char *byte_buffer =
-          reinterpret_cast<unsigned char *>(buffer) + 4;
-      int position = 0;
-
-      int key = 0;
-      for (const_iterator i = std::vector<node_t>::begin();
-           i != std::vector<node_t>::end();
-           ++i, ++key) {
-        // Header
-        byte_buffer[position] = (*i)->get_node_code();
-        position++;
-        // Key
-        std::string keyS = std::to_string(key);
-        std::strcpy(reinterpret_cast<char *>(byte_buffer + position),
-                    keyS.c_str());
-        position += keyS.length() + 1;
-        // Value
-        (*i)->serialize(byte_buffer + position, serializeCount - position);
-        position += (*i)->get_serialized_size();
-      }
-
-      byte_buffer[serialized_size - 1 - 4] = '\0';
-    }
-  }
-
-  virtual size_t get_serialized_size() const override {
-    size_t result = 4 + 1; // 4 for size and 1 is last
-
-    int count = 0;
-    for (auto i = std::vector<node_t>::begin(); i != std::vector<node_t>::end();
-         ++i, ++count) {
-      result +=
-          1 + std::to_string(count).length() + 1 + (*i)->get_serialized_size();
-    }
-
-    return result;
-  }
-
-  virtual void dump(std::ostream &stream) const override {
-    stream << "[ ";
-
-    for (auto i = std::vector<node_t>::begin(); i != std::vector<node_t>::end();
-         ++i) {
-      (*i)->dump(stream);
-
-      if (std::next(i) != std::vector<node_t>::end())
-        stream << ", ";
-    }
-
-    stream << " ]";
-  }
-
-  node_t copy() const override { return node_t{new array(*this)}; }
-
-  bson_node_type get_node_code() const override { return array_node; }
-
-  template <typename result_type>
-  result_type &at(int i) {
-    const bson_node_type node_type_code = static_cast<bson_node_type>(
-        type_converter<result_type>::node_type_code);
-    typedef typename type_converter<result_type>::node_class node_class;
-
-    node_t &curNode = std::vector<node_t>::at(i);
-    if (curNode->get_node_code() != node_type_code) {
-      throw std::bad_cast{};
-    }
-    return reinterpret_cast<node_class *>(curNode.get())->get_value();
-  }
-
-  template <typename result_type>
-  const result_type &at(int i) const {
-    const bson_node_type node_type_code = static_cast<bson_node_type>(
-        type_converter<result_type>::node_type_code);
-    typedef typename type_converter<result_type>::node_class node_class;
-
-    const node_t &curNode = std::vector<node_t>::at(i);
-    if (curNode->get_node_code() != node_type_code) {
-      throw std::bad_cast{};
-    }
-    return reinterpret_cast<const node_class *>(curNode.get())->get_value();
-  }
-
-  // we need copy the elements because it have to return array, not document
-  template <typename value_type>
-  array &push_back(const value_type &value) {
-    typedef typename type_converter<value_type>::node_class node_class;
-
-    std::vector<node_t>::emplace_back(node_t{new node_class(value)});
-    return (*this);
-  }
-
-  template <typename value_type>
-  array &push_back(value_type &&value) {
-    typedef typename type_converter<value_type>::node_class node_class;
-
-    std::vector<node_t>::emplace_back(node_t{new node_class(std::move(value))});
-    return (*this);
-  }
-
-  array &push_back(const char *value) {
-    std::vector<node_t>::emplace_back(node_t{new string(value)});
-    return (*this);
-  }
-
-  array &push_back() {
-    std::vector<node_t>::emplace_back(node_t{new null()});
-    return (*this);
-  }
+private:
+  value_type val_;
 };
 
-inline document &document::set(const std::string &key, array &&value) {
-  this->erase(key);
-  this->emplace(key, std::unique_ptr<array>(new array(std::move(value))));
-  return *this;
+template <>
+class NodeValueT<void> final : public NodeValue {
+public:
+  using value_type = typename type_traits<void>::value_type;
+
+  NodeValueT() = default;
+
+  BsonNodeType type() const noexcept override {
+    return static_cast<BsonNodeType>(type_traits<void>::node_type_code);
+  }
+  int getSerializedSize() const noexcept override { return 0; }
+  int serialize(void *, int) const override { return 0; }
+};
+
+class UNodeValueFactory {
+public:
+  template <class T>
+  static UNodeValue create(T &&val) {
+    return std::make_unique<NodeValueT<T>>(std::move(val));
+  }
+
+  template <class T>
+  static UNodeValue create(const T &val) {
+    return std::make_unique<NodeValueT<T>>(val);
+  }
+
+  static UNodeValue create() { return std::make_unique<NodeValueT<void>>(); }
+};
+
+class Binary final {
+public:
+  Binary() = default;
+  Binary(const void *buf, int length) {
+    buf_.resize(length);
+    std::memcpy(buf_.data(), buf, length);
+  }
+  Binary(std::vector<byte> &&buf)
+      : buf_(std::move(buf)) {}
+
+  BsonNodeType type() const noexcept { return binary_node; }
+  int          getSerializedSize() const noexcept {
+    return 4 /*size*/ + 1 /*subtype*/ + buf_.size();
+  }
+  int serialize(void *buf, int bufSize) const {
+    int size = buf_.size();
+    if (bufSize < 4 /*size*/ + 1 /*subtype*/ + size) {
+      throw bson::InvalidArgument{MEMORY_ERROR};
+    }
+
+    *reinterpret_cast<int *>(buf) = size;
+    byte *ptr                     = reinterpret_cast<byte *>(buf) + 4 /*size*/;
+    *ptr                          = '\0'; // binary subtype
+    ++ptr;
+    std::memcpy(ptr, buf_.data(), size);
+    *(ptr + size) = '\0';
+    return 4 /*size*/ + 1 /*subtype*/ + size;
+  }
+
+private:
+  std::vector<byte> buf_;
+};
+
+class Document final {
+public:
+  Document() = default;
+
+  /**\param buffer pointer to serialized bson document
+   * \param length size of buffer, need for validate the document
+   * \throw bson::InvalidArgument if can not deserialize bson
+   */
+  Document(const void *buffer, int length);
+
+  BsonNodeType type() const noexcept { return document_node; }
+  int          getSerializedSize() const noexcept {
+    int count = 4 /*size*/;
+    for (auto &[name, val] : doc_) {
+      count += 1 /*type*/ + name.size() + 1 /*\0*/ + val->getSerializedSize();
+    }
+    return count + 1 /*\0*/;
+  }
+
+  /**\throw bson::InvalidArgument if memory not enough
+   */
+  int serialize(void *buf, int bufSize) const noexcept(false);
+
+  /**\throw bson::OutOfRange if not have the value, or bson::BadCast if have not
+   * same type
+   */
+  template <class ReturnType>
+  const ReturnType &get(const std::string &key) const noexcept(false) {
+    using value_type = typename type_traits<ReturnType>::value_type;
+    static_assert(std::is_same<value_type, ReturnType>::value);
+
+    if (auto found = doc_.find(key); found != doc_.end()) {
+      if (type_traits<ReturnType>::node_type_code == found->second->type()) {
+        return reinterpret_cast<const NodeValueT<value_type> *>(
+                   found->second.get())
+            ->value();
+      } else {
+        throw bson::BadCast{};
+      }
+    } else {
+      throw bson::OutOfRange{"hame not value by key: " + std::string{key}};
+    }
+  }
+
+  template <class ReturnType>
+  ReturnType &get(const std::string &key) noexcept(false) {
+    using value_type = typename type_traits<ReturnType>::value_type;
+    static_assert(std::is_same<value_type, ReturnType>::value);
+
+    if (auto found = doc_.find(key); found != doc_.end()) {
+      if (found->second->type() == type_traits<ReturnType>::node_type_code) {
+        return reinterpret_cast<NodeValueT<value_type> *>(found->second.get())
+            ->value();
+      } else {
+        throw bson::BadCast{};
+      }
+    } else {
+      throw bson::OutOfRange{"hame not value by key: " + std::string{key}};
+    }
+  }
+
+  template <class InsertType>
+  Document &set(std::string key, const InsertType &val) noexcept {
+    doc_.insert_or_assign(std::move(key), UNodeValueFactory::create(val));
+    return *this;
+  }
+
+  template <class InsertType>
+  Document &set(std::string key, InsertType &&val) noexcept {
+    doc_.insert_or_assign(std::move(key),
+                          UNodeValueFactory::create(std::move(val)));
+    return *this;
+  }
+
+  Document &set(std::string key) noexcept {
+    doc_.insert_or_assign(std::move(key), UNodeValueFactory::create());
+    return *this;
+  }
+
+  bool contains(const std::string &key) const noexcept {
+    if (auto found = doc_.find(key); found != doc_.end()) {
+      return true;
+    }
+    return false;
+  }
+
+  template <typename Type>
+  bool contains(const std::string &key) const noexcept {
+    if (auto found = doc_.find(key);
+        found != doc_.end() &&
+        type_traits<Type>::node_type_code == found->second->type()) {
+      return true;
+    }
+    return false;
+  }
+
+  Document &erase(const std::string &key) noexcept(false) {
+    doc_.erase(key);
+    return *this;
+  }
+
+private:
+  std::map<std::string, UNodeValue> doc_;
+};
+
+class Array final {
+public:
+  Array() = default;
+  Array(const void *buf, int length);
+
+  BsonNodeType type() const noexcept { return array_node; }
+  int          getSerializedSize() const noexcept {
+    int count = 4 /*size*/;
+    for (size_t i = 0; i < arr_.size(); ++i) {
+      count += 1 /*type*/ + std::to_string(i).size() + 1 /*\0*/ +
+               arr_[i]->getSerializedSize();
+    }
+    return count + 1 /*\0*/;
+  }
+  int serialize(void *buf, int bufSize) const;
+
+  void reserve(int n) noexcept { this->arr_.reserve(n); }
+
+  /**\throw bson::OutOfRange or bson::BadCast
+   */
+  template <class ReturnType>
+  const ReturnType &at(int i) const noexcept(false) {
+    using value_type = typename type_traits<ReturnType>::value_type;
+    static_assert(std::is_same<ReturnType, value_type>::value);
+
+    if (arr_.size() < size_t(i)) {
+      throw bson::OutOfRange{"have not value by index: " + std::to_string(i)};
+    }
+
+    if (arr_[i]->type() != type_traits<ReturnType>::value_type) {
+      throw bson::BadCast{};
+    }
+
+    return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
+  }
+
+  template <class ReturnType>
+  ReturnType &at(int i) noexcept(false) {
+    using value_type = typename type_traits<ReturnType>::value_type;
+    static_assert(std::is_same<ReturnType, value_type>::value);
+
+    if (arr_.size() < size_t(i)) {
+      throw bson::OutOfRange{"have not value by index: " + std::to_string(i)};
+    }
+
+    if (arr_[i]->type() != type_traits<ReturnType>::value_type) {
+      throw bson::BadCast{};
+    }
+
+    return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
+  }
+
+  template <class InsertType>
+  Array &push_back(InsertType &&val) {
+    arr_.push_back(UNodeValueFactory::create(std::move(val)));
+    return *this;
+  }
+
+  template <class InsertType>
+  Array &push_back(const InsertType &val) {
+    arr_.push_back(UNodeValueFactory::create(val));
+    return *this;
+  }
+
+  /**\throw bson::OutOfRange
+   */
+  Array &erase(int i) noexcept(false) {
+    if (arr_.size() > size_t(i)) {
+      arr_.erase(arr_.begin() + i);
+    }
+
+    throw bson::OutOfRange{"index: " + std::to_string(i) +
+                           " - more then size: " + std::to_string(arr_.size())};
+  }
+
+private:
+  std::vector<UNodeValue> arr_;
+};
+
+Document::Document(const void *buffer, int length) {
+  microbson::Document doc{buffer, length};
+  for (auto i = doc.begin(); i != doc.end(); ++i) {
+    microbson::Node node = *i;
+    switch (node.type()) {
+    case microbson::string_node:
+      doc_.emplace(node.name(),
+                   UNodeValueFactory::create(node.value<std::string_view>()));
+      break;
+    case microbson::boolean_node:
+      doc_.emplace(node.name(), UNodeValueFactory::create(node.value<bool>()));
+      break;
+    case microbson::int32_node:
+      doc_.emplace(node.name(),
+                   UNodeValueFactory::create(node.value<int32_t>()));
+      break;
+    case microbson::int64_node:
+      doc_.emplace(node.name(),
+                   UNodeValueFactory::create(node.value<int64_t>()));
+      break;
+    case microbson::double_node:
+      doc_.emplace(node.name(),
+                   UNodeValueFactory::create(node.value<double>()));
+      break;
+    case microbson::null_node:
+      doc_.emplace(node.name(), UNodeValueFactory::create());
+      break;
+    case microbson::array_node:
+      doc_.emplace(
+          node.name(),
+          UNodeValueFactory::create(Array{node.data(), node.length()}));
+      break;
+    case microbson::document_node:
+      doc_.emplace(
+          node.name(),
+          UNodeValueFactory::create(Document{node.data(), node.length()}));
+      break;
+    case microbson::binary_node:
+      doc_.emplace(
+          node.name(),
+          UNodeValueFactory::create(Binary{node.data(), node.length()}));
+      break;
+    case microbson::unknown_node:
+      throw bson::InvalidArgument{"unknown node by key: " +
+                                  std::string{node.name()}};
+      break;
+    }
+  }
 }
 
-template <>
-struct type_converter<document> {
-  enum { node_type_code = document_node };
-  typedef document node_class;
-};
+int Document::serialize(void *buf, int length) const {
+  int size = this->getSerializedSize();
 
-template <>
-struct type_converter<array> {
-  enum { node_type_code = array_node };
-  typedef array node_class;
-};
-
-inline node_t node::create(bson_node_type    type,
-                           const void *const buffer,
-                           const size_t      count) {
-  switch (type) {
-  case null_node:
-    return node_t{new null()};
-  case int32_node:
-    return node_t{new int32(buffer, count)};
-  case int64_node:
-    return node_t{new int64(buffer, count)};
-  case double_node:
-    return node_t{new Double(buffer, count)};
-  case document_node:
-    return node_t{new document(buffer, count)};
-  case array_node:
-    return node_t{new array(buffer, count)};
-  case string_node:
-    return node_t{new string(buffer, count)};
-  case binary_node:
-    return node_t{new binary(buffer, count)};
-  case boolean_node:
-    return node_t{new boolean(buffer, count)};
-  default:
-    return NULL;
+  if (length < size) {
+    throw bson::InvalidArgument{MEMORY_ERROR};
   }
+
+  *reinterpret_cast<int *>(buf) = size;
+  char *ptr                     = reinterpret_cast<char *>(buf);
+  int   offset                  = 4 /*size*/;
+  for (auto &[name, val] : doc_) {
+    // serialize type and name
+    *(ptr + offset) = val->type();
+    ++offset;
+    std::strcpy(ptr + offset, name.c_str());
+    offset += name.size() + 1;
+
+    offset += val->serialize(ptr + offset, length - offset - 1 /*\0*/);
+  }
+
+  *(ptr + offset) = '\0';
+  ++offset;
+
+  if (offset != size) { // have to be same as getSerializedSize
+    throw std::runtime_error{"invalid serialization"}; // TODO is it needed?
+  }
+
+  return offset;
+}
+
+Array::Array(const void *buffer, int length) {
+  microbson::Document doc{buffer, length};
+  arr_.reserve(doc.size());
+  for (auto i = doc.begin(); i != doc.end(); ++i) {
+    microbson::Node node = *i;
+    switch (node.type()) {
+    case microbson::string_node:
+      arr_.emplace_back(
+          UNodeValueFactory::create(node.value<std::string_view>()));
+      break;
+    case microbson::boolean_node:
+      arr_.emplace_back(UNodeValueFactory::create(node.value<bool>()));
+      break;
+    case microbson::int32_node:
+      arr_.emplace_back(UNodeValueFactory::create(node.value<int32_t>()));
+      break;
+    case microbson::int64_node:
+      arr_.emplace_back(UNodeValueFactory::create(node.value<int64_t>()));
+      break;
+    case microbson::double_node:
+      arr_.emplace_back(UNodeValueFactory::create(node.value<double>()));
+      break;
+    case microbson::null_node:
+      arr_.emplace_back(UNodeValueFactory::create());
+      break;
+    case microbson::array_node:
+      arr_.emplace_back(
+          UNodeValueFactory::create(Array{node.data(), node.length()}));
+      break;
+    case microbson::document_node:
+      arr_.emplace_back(
+          UNodeValueFactory::create(Document{node.data(), node.length()}));
+      break;
+    case microbson::binary_node:
+      arr_.emplace_back(
+          UNodeValueFactory::create(Binary{node.data(), node.length()}));
+      break;
+    case microbson::unknown_node:
+      throw bson::InvalidArgument{"unknown node by index: " +
+                                  std::string{node.name()}};
+      break;
+    }
+  }
+}
+
+int Array::serialize(void *buf, int length) const {
+  int size = this->getSerializedSize();
+
+  if (length < size) {
+    throw bson::InvalidArgument{MEMORY_ERROR};
+  }
+
+  *reinterpret_cast<int *>(buf) = size;
+  char *ptr                     = reinterpret_cast<char *>(buf);
+  int   offset                  = 4 /*size*/;
+  for (size_t i = 0; i < arr_.size(); ++i) {
+    std::string       name = std::to_string(i);
+    const UNodeValue &val  = arr_[i];
+
+    // serialize type and name
+    *(ptr + offset) = val->type();
+    ++offset;
+    std::strcpy(ptr + offset, name.c_str());
+    offset += name.size() + 1;
+
+    offset += val->serialize(ptr + offset, length - offset - 1 /*\0*/);
+  }
+
+  *(ptr + offset) = '\0';
+  ++offset;
+
+  if (offset != size) { // have to be same as getSerializedSize
+    throw std::runtime_error{"invalid serialization"}; // TODO is it needed?
+  }
+
+  return offset;
 }
 } // namespace minibson

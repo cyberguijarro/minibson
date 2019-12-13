@@ -9,6 +9,23 @@
 #include <string>
 #include <string_view>
 
+namespace bson {
+class BadCast : public std::bad_cast {
+public:
+  using std::bad_cast::bad_cast;
+};
+
+class InvalidArgument : public std::invalid_argument {
+public:
+  using std::invalid_argument::invalid_argument;
+};
+
+class OutOfRange : public std::out_of_range {
+public:
+  using std::out_of_range::out_of_range;
+};
+} // namespace bson
+
 namespace microbson {
 using byte = uint8_t;
 
@@ -65,9 +82,15 @@ struct type_traits<int64_t> {
 };
 
 template <>
+struct type_traits<long long int> {
+  enum { node_type_code = int64_node };
+  using value_type = int64_t;
+};
+
+template <>
 struct type_traits<std::string> {
   enum { node_type_code = string_node };
-  using value_type = std::string;
+  using value_type = std::string_view;
 };
 
 template <>
@@ -106,20 +129,9 @@ struct type_traits<Binary> {
   using value_type = Binary;
 };
 
-class ParseException : public std::exception {
-public:
-  ParseException(std::string what)
-      : what_{std::move(what)} {}
-
-  const char *what() const noexcept override { return what_.c_str(); }
-
-private:
-  std::string what_;
-};
-
 class Node {
 public:
-  Node(const byte *data)
+  explicit Node(const byte *data)
       : data_{data} {}
 
   BsonNodeType type() const noexcept {
@@ -136,7 +148,7 @@ public:
   int length() const noexcept {
     int result = 1 /*type*/ + this->name().size() + 1 /*\0*/;
 
-    switch (type()) {
+    switch (this->type()) {
     case double_node:
       result += sizeof(double);
       break;
@@ -148,8 +160,8 @@ public:
       result += (sizeof(int) + *reinterpret_cast<const int *>(data_ + result));
       break;
     case binary_node:
-      result +=
-          (sizeof(int) + *reinterpret_cast<const int *>(data_ + result) + 1);
+      result += (sizeof(int) + *reinterpret_cast<const int *>(data_ + result) +
+                 1 /*\0*/);
       break;
     case boolean_node:
       result += 1;
@@ -170,14 +182,14 @@ public:
   }
 
   /**\return value in current node
-   * \throw ParseException if can not convert
+   * \throw bson::BadCast if can not convert
    */
   template <class ReturnType>
   ReturnType value() const noexcept(false) {
     using value_type = typename type_traits<ReturnType>::value_type;
 
     if (this->type() != type_traits<ReturnType>::node_type_code) {
-      throw ParseException{"invalid conversion"};
+      throw bson::BadCast{};
     }
 
     const byte *offset = data_ + 1 /*type*/ + this->name().size() + 1 /*\0*/;
@@ -192,13 +204,14 @@ public:
     } else if constexpr (std::is_void<value_type>::value) {
       return;
     } else if constexpr (std::is_same<value_type, Binary>::value) {
-      return value_type{offset + 4 +
-                            1 /*+4 - size of buf, +1 - subtype of buf*/,
+      return value_type{offset + 4 /*size*/ + 1 /*subtype*/,
                         *reinterpret_cast<const int *>(offset)};
     } else {
       return *reinterpret_cast<const value_type *>(offset);
     }
   }
+
+  const void *data() const noexcept { return data_; }
 
 private:
   const byte *data_;
@@ -211,13 +224,13 @@ public:
 
   /**\param data pointer to serialized bson data
    * \param length size of bson data. Not required, needed for validation
-   * \throw ParseException if data isn't `nullptr`, size set and validation
-   * failed
+   * \throw bson::InvalidArgument if data isn't `nullptr`, size set and
+   * validation failed
    */
   Document(const void *data, int length)
       : data_{reinterpret_cast<const byte *>(data)} {
     if (data_ && !this->valid(length)) {
-      throw ParseException{"not valid bson"};
+      throw bson::InvalidArgument{"invalid bson"};
     }
   }
 
@@ -254,7 +267,6 @@ public:
         : offset_{nullptr} {}
 
     ConstIterator &operator++() noexcept {
-      // TODO implement this
       offset_ += Node{offset_}.length();
       return *this;
     }
@@ -299,7 +311,7 @@ public:
    */
   bool contains(std::string_view key) const noexcept;
 
-  /**\throw ParseException if value not found or if value have different type
+  /**\throw bson::OutOfRange if value not found or if value have different type
    * \brief this safely function for get value from bson array by index, BUT!:
    * this is very slowly. Use iterator where ever it possible
    */
@@ -314,7 +326,7 @@ class Array final : public Document {
 public:
   using Document::Document;
 
-  /**\throw ParseException if no value by index `i`
+  /**\throw bson::OutOfRange if no value by index `i`
    * \brief this safely function for get value from bson array by index, BUT!:
    * this is very slowly. Use iterator where ever it possible
    */
@@ -326,9 +338,6 @@ public:
 
   template <class T>
   T get(std::string_view) const = delete;
-
-private:
-  const byte *data_;
 };
 } // namespace microbson
 
@@ -400,7 +409,7 @@ ReturnType Document::get(std::string_view key) const {
       found != this->end()) {
     return (*found).template value<ReturnType>();
   } else {
-    throw ParseException{"out of range"};
+    throw bson::OutOfRange{"no value by key: " + std::string{key}};
   }
 }
 
@@ -412,7 +421,7 @@ ReturnType Array::at(int i) const {
   if (iter != this->end()) {
     return (*iter).template value<ReturnType>();
   } else {
-    throw ParseException{"out of range"};
+    throw bson::OutOfRange{"no value by index: " + std::to_string(i)};
   }
 }
 } // namespace microbson
