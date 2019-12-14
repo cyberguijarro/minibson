@@ -100,6 +100,18 @@ int main() {
   assert((reinterpret_cast<const char *>(binary.first)) ==
          std::string_view(SOME_BUF_STR));
 
+  minibson::Array &arr = d.get<minibson::Array>("array");
+  auto             j   = a.begin();
+  for (auto i = arr.begin(); i != arr.end() && j != a.end(); ++i, ++j) {
+    assert((*j).value<int32_t>() == i.value<int32_t>());
+  }
+
+  auto iter = arr.begin();
+  std::for_each(a.begin(), a.end(), [&iter](const microbson::Node &node) {
+    assert(node.value<int32_t>() == iter.value<int32_t>());
+    ++iter;
+  });
+
   delete[] buffer;
 
   return EXIT_SUCCESS;

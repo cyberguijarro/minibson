@@ -370,6 +370,101 @@ public:
     return *this;
   }
 
+  class Iterator {
+    friend Document;
+    using imp_iter_type = std::map<std::string, UNodeValue>::iterator;
+
+  public:
+    Iterator() = default;
+
+    Iterator &operator++() {
+      ++imp_;
+      return *this;
+    }
+
+    UNodeValue &operator*() { return imp_->second; }
+    bool        operator==(const Iterator &rhs) const {
+      return this->imp_ == rhs.imp_;
+    }
+    bool operator!=(const Iterator &rhs) const {
+      return this->imp_ != rhs.imp_;
+    }
+
+    const std::string &name() const { return imp_->first; }
+
+    /**\throw bson::BadCast
+     */
+    template <class ReturnType>
+    ReturnType &value() noexcept(false) {
+      using value_type = typename type_traits<ReturnType>::value_type;
+      static_assert(std::is_same<value_type, ReturnType>::value);
+
+      if (imp_->second->type() == type_traits<ReturnType>::node_type_code) {
+        return reinterpret_cast<NodeValueT<ReturnType> *>(imp_->second.get())
+            ->value();
+      }
+
+      throw bson::BadCast{};
+    }
+
+  private:
+    Iterator(imp_iter_type &&imp)
+        : imp_{imp} {}
+
+  private:
+    imp_iter_type imp_;
+  };
+
+  class ConstIterator {
+    friend Document;
+    using imp_iter_type = std::map<std::string, UNodeValue>::const_iterator;
+
+  public:
+    ConstIterator() = default;
+
+    ConstIterator &operator++() {
+      ++imp_;
+      return *this;
+    }
+
+    const UNodeValue &operator*() const { return imp_->second; }
+    bool              operator==(const Iterator &rhs) const {
+      return this->imp_ == rhs.imp_;
+    }
+    bool operator!=(const Iterator &rhs) const {
+      return this->imp_ != rhs.imp_;
+    }
+
+    const std::string &name() const { return imp_->first; }
+
+    /**\throw bson::BadCast
+     */
+    template <class ReturnType>
+    const ReturnType &value() const noexcept(false) {
+      using value_type = typename type_traits<ReturnType>::value_type;
+      static_assert(std::is_same<value_type, ReturnType>::value);
+
+      if (imp_->second->type() == type_traits<ReturnType>::node_type_code) {
+        return reinterpret_cast<NodeValueT<ReturnType> *>(imp_->second.get())
+            ->value();
+      }
+
+      throw bson::BadCast{};
+    }
+
+  private:
+    ConstIterator(imp_iter_type &&imp)
+        : imp_{imp} {}
+
+  private:
+    imp_iter_type imp_;
+  };
+
+  Iterator      begin() { return Iterator{doc_.begin()}; }
+  Iterator      end() { return Iterator{doc_.end()}; }
+  ConstIterator begin() const { return ConstIterator{doc_.begin()}; }
+  ConstIterator end() const { return ConstIterator{doc_.end()}; }
+
 private:
   std::map<std::string, UNodeValue> doc_;
 };
@@ -448,6 +543,106 @@ public:
     throw bson::OutOfRange{"index: " + std::to_string(i) +
                            " - more then size: " + std::to_string(arr_.size())};
   }
+
+  class Iterator {
+    friend Array;
+    using imp_iter_type = std::vector<UNodeValue>::iterator;
+
+  public:
+    Iterator() = default;
+
+    Iterator &operator++() {
+      ++imp_;
+      ++num_;
+      return *this;
+    }
+
+    UNodeValue &operator*() { return *imp_; }
+    bool        operator==(const Iterator &rhs) const {
+      return this->imp_ == rhs.imp_;
+    }
+    bool operator!=(const Iterator &rhs) const {
+      return this->imp_ != rhs.imp_;
+    }
+
+    std::string name() const { return std::to_string(num_); }
+
+    /**\throw bson::BadCast
+     */
+    template <class ReturnType>
+    ReturnType &value() noexcept(false) {
+      using value_type = typename type_traits<ReturnType>::value_type;
+      static_assert(std::is_same<value_type, ReturnType>::value);
+
+      if ((*imp_)->type() == type_traits<ReturnType>::node_type_code) {
+        return reinterpret_cast<NodeValueT<ReturnType> *>((*imp_).get())
+            ->value();
+      }
+
+      throw bson::BadCast{};
+    }
+
+  private:
+    Iterator(imp_iter_type &&imp, size_t num)
+        : imp_{imp}
+        , num_{num} {}
+
+  private:
+    imp_iter_type imp_;
+    size_t        num_;
+  };
+
+  class ConstIterator {
+    friend Array;
+    using imp_iter_type = std::vector<UNodeValue>::const_iterator;
+
+  public:
+    ConstIterator() = default;
+
+    ConstIterator &operator++() {
+      ++imp_;
+      ++num_;
+      return *this;
+    }
+
+    const UNodeValue &operator*() const { return *imp_; }
+    bool              operator==(const ConstIterator &rhs) const {
+      return this->imp_ == rhs.imp_;
+    }
+    bool operator!=(const ConstIterator &rhs) const {
+      return this->imp_ != rhs.imp_;
+    }
+
+    std::string name() const { return std::to_string(num_); }
+
+    /**\throw bson::BadCast
+     */
+    template <class ReturnType>
+    ReturnType &value() noexcept(false) {
+      using value_type = typename type_traits<ReturnType>::value_type;
+      static_assert(std::is_same<value_type, ReturnType>::value);
+
+      if ((*imp_)->type() == type_traits<ReturnType>::node_type_code) {
+        return reinterpret_cast<NodeValueT<ReturnType> *>((*imp_).get())
+            ->value();
+      }
+
+      throw bson::BadCast{};
+    }
+
+  private:
+    ConstIterator(imp_iter_type &&imp, size_t num)
+        : imp_{imp}
+        , num_{num} {}
+
+  private:
+    imp_iter_type imp_;
+    size_t        num_;
+  };
+  Iterator      begin() { return Iterator{arr_.begin(), 0}; }
+  Iterator      end() { return Iterator{arr_.end(), arr_.size()}; }
+  ConstIterator begin() const { return ConstIterator{arr_.begin(), 0}; }
+  ConstIterator end() const { return ConstIterator{arr_.end(), arr_.size()}; }
 
 private:
   std::vector<UNodeValue> arr_;
@@ -611,3 +806,37 @@ int Array::serialize(void *buf, int length) const {
   return offset;
 }
 } // namespace minibson
+
+namespace std {
+template <>
+struct iterator_traits<minibson::Document::ConstIterator> {
+  using iterator_category = std::forward_iterator_tag;
+  using difference_type   = std::ptrdiff_t;
+  using reference         = minibson::UNodeValue &;
+  using pointer           = minibson::UNodeValue *;
+};
+
+template <>
+struct iterator_traits<minibson::Document::Iterator> {
+  using iterator_category = std::forward_iterator_tag;
+  using difference_type   = std::ptrdiff_t;
+  using reference         = minibson::UNodeValue &;
+  using pointer           = minibson::UNodeValue *;
+};
+
+template <>
+struct iterator_traits<minibson::Array::ConstIterator> {
+  using iterator_category = std::forward_iterator_tag;
+  using difference_type   = std::ptrdiff_t;
+  using reference         = minibson::UNodeValue &;
+  using pointer           = minibson::UNodeValue *;
+};
+
+template <>
+struct iterator_traits<minibson::Array::Iterator> {
+  using iterator_category = std::forward_iterator_tag;
+  using difference_type   = std::ptrdiff_t;
+  using reference         = minibson::UNodeValue &;
+  using pointer           = minibson::UNodeValue *;
+};
+} // namespace std

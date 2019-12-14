@@ -345,7 +345,6 @@ namespace std {
 template <>
 struct iterator_traits<microbson::Document::ConstIterator> {
   using iterator_category = std::forward_iterator_tag;
-  using value_type        = microbson::Node;
   using difference_type   = std::ptrdiff_t;
 };
 } // namespace std
