@@ -16,6 +16,43 @@
     }                                                                          \
   }
 
+// type placeholder for custom type_traits for microbson
+struct String {};
+
+namespace microbson {
+template <>
+struct type_traits<String> {
+  enum { node_type_code = bson::binary_node };
+  using return_type = std::string;
+  static std::string converter(const void *ptr) {
+    std::string str;
+    int         size = *reinterpret_cast<const int *>(ptr);
+    str.resize(size - 1); // because in buffer is null terminated string
+    std::memcpy(
+        str.data(), reinterpret_cast<const int8_t *>(ptr) + 5, size - 1);
+    return str;
+  }
+};
+} // namespace microbson
+
+namespace minibson {
+template <>
+struct type_traits<String> {
+  enum { node_type_code = bson::binary_node };
+  using value_type  = Binary;
+  using return_type = std::string;
+  static std::string converter(const Binary &b) {
+    std::string retval;
+    std::copy(b.buf_.begin(),
+              b.buf_.end() - 1 /*we write to buf \0, so if we want to compare
+                                  strings, we need remove it from std::string*/
+              ,
+              std::back_inserter(retval));
+    return retval;
+  }
+};
+} // namespace minibson
+
 int main() {
   // create document for testing
   minibson::Document d;
@@ -29,13 +66,37 @@ int main() {
   d.set("document", minibson::Document().set("a", 3).set("b", 4));
   d.set("some_other_string", std::string{"some_other_text"});
   d.set("null");
-  d.set("array", minibson::Array{}.push_back(0).push_back(1));
+  d.set("array",
+        minibson::Array{}.push_back(0).push_back(1).push_back(
+            std::string{"hello"}));
 
   d.set("some_value_for_change", 10);
-  assert(d.get<int>("some_value_for_change") == 10);
+  assert(d.get<int32_t>("some_value_for_change") == 10);
   d.set("some_value_for_change", std::string("some_string"));
   assert(d.get<std::string>("some_value_for_change") == "some_string");
   d.erase("some_value_for_change");
+
+  static_assert(
+      std::is_reference<decltype(d.get<std::string>("string"))>::value);
+  static_assert(
+      !std::is_reference<decltype(d.get<std::string_view>("string"))>::value);
+  static_assert(!std::is_reference<decltype(d.get<double>("float"))>::value);
+  static_assert(
+      std::is_reference<decltype(d.get<minibson::Array>("array"))>::value);
+  static_assert(!std::is_reference<decltype(
+                    d.get<minibson::Array>("array").at<int32_t>(0))>::value);
+  static_assert(
+      std::is_reference<decltype(
+          d.get<minibson::Array>("array").at<std::string>(3))>::value);
+
+  assert(d.get<int32_t>("int32") == 1);
+  assert(d.get<int64_t>("int64") == 140737488355328LL);
+  assert(d.get<double>("float") == 30.20);
+  assert(d.get<bool>("boolean") == true);
+  assert(d.get<std::string_view>("string") == "text");
+  assert(std::strcmp(d.get<const char *>("string"), "text") == 0);
+
+  assert(d.get<String>("binary") == SOME_BUF_STR);
 
   int   length = d.getSerializedSize();
   char *buffer = new char[length];
@@ -88,14 +149,20 @@ int main() {
   assert(nestedDoc.get<int32_t>("b") == 4);
 
   microbson::Array a = doc.get<microbson::Array>("array");
-  assert(a.size() == 2);
+  assert(a.size() == 3);
   assert(a.at<int32_t>(0) == 0);
   assert(a.at<int32_t>(1) == 1);
-  CHECK_EXCEPT(a.at<int>(2), bson::OutOfRange);
+  assert(a.at<std::string_view>(2) == "hello");
+  CHECK_EXCEPT(a.at<int>(2), bson::BadCast);
+  CHECK_EXCEPT(a.at<int>(3), bson::OutOfRange);
 
   microbson::Binary binary = doc.get<microbson::Binary>("binary");
   assert(binary.first != nullptr);
   assert(binary.second == sizeof(SOME_BUF_STR));
+
+  // new type
+  std::string s = doc.get<String>("binary");
+  assert(s == SOME_BUF_STR);
 
   assert((reinterpret_cast<const char *>(binary.first)) ==
          std::string_view(SOME_BUF_STR));
@@ -103,12 +170,31 @@ int main() {
   minibson::Array &arr = d.get<minibson::Array>("array");
   auto             j   = a.begin();
   for (auto i = arr.begin(); i != arr.end() && j != a.end(); ++i, ++j) {
-    assert((*j).value<int32_t>() == i.value<int32_t>());
+    switch (j.type()) {
+    case bson::int32_node:
+      assert(j.value<int32_t>() == i.value<int32_t>());
+      break;
+    case bson::string_node:
+      assert(j.value<std::string_view>() == i.value<const char *>());
+      break;
+    default:
+      break;
+    }
   }
 
   auto iter = arr.begin();
   std::for_each(a.begin(), a.end(), [&iter](const microbson::Node &node) {
-    assert(node.value<int32_t>() == iter.value<int32_t>());
+    switch (iter.type()) {
+    case bson::int32_node:
+      assert(iter.value<int32_t>() == node.value<int32_t>());
+      break;
+    case bson::string_node:
+      assert(iter.value<std::string_view>() == node.value<std::string_view>());
+      break;
+    default:
+      break;
+    }
+
     ++iter;
   });
 

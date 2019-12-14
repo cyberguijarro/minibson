@@ -24,12 +24,8 @@ class OutOfRange : public std::out_of_range {
 public:
   using std::out_of_range::out_of_range;
 };
-} // namespace bson
 
-namespace microbson {
-using byte = uint8_t;
-
-enum BsonNodeType {
+enum NodeType {
   double_node   = 0x01,
   string_node   = 0x02,
   document_node = 0x03,
@@ -43,99 +39,33 @@ enum BsonNodeType {
 };
 
 // needed for prevent warning about enum compare
-bool operator==(BsonNodeType lhs, int rhs) {
+constexpr bool operator==(NodeType lhs, int rhs) {
   return int(lhs) == rhs;
 }
-bool operator!=(BsonNodeType lhs, int rhs) {
+constexpr bool operator!=(NodeType lhs, int rhs) {
   return int(lhs) != rhs;
 }
+} // namespace bson
 
-class Document;
-class Array;
-using Binary = std::pair<const void *, int32_t>;
-
+namespace microbson {
+/**\brief must contains:
+ * - enum {node_type_code = ...} (required)
+ * - using return_type = ... (required)
+ * - static return_type converter(const void *ptr) (required)
+ */
 template <class T>
 struct type_traits {};
 
-template <>
-struct type_traits<double> {
-  enum { node_type_code = double_node };
-  using value_type = double;
-};
-
-template <>
-struct type_traits<float> {
-  enum { node_type_code = double_node };
-  using value_type = double;
-};
-
-template <>
-struct type_traits<int32_t> {
-  enum { node_type_code = int32_node };
-  using value_type = int32_t;
-};
-
-template <>
-struct type_traits<int64_t> {
-  enum { node_type_code = int64_node };
-  using value_type = int64_t;
-};
-
-template <>
-struct type_traits<long long int> {
-  enum { node_type_code = int64_node };
-  using value_type = int64_t;
-};
-
-template <>
-struct type_traits<std::string> {
-  enum { node_type_code = string_node };
-  using value_type = std::string_view;
-};
-
-template <>
-struct type_traits<std::string_view> {
-  enum { node_type_code = string_node };
-  using value_type = std::string_view;
-};
-
-template <>
-struct type_traits<bool> {
-  enum { node_type_code = boolean_node };
-  using value_type = bool;
-};
-
-template <>
-struct type_traits<void> {
-  enum { node_type_code = null_node };
-  using value_type = void;
-};
-
-template <>
-struct type_traits<Array> {
-  enum { node_type_code = array_node };
-  using value_type = Array;
-};
-
-template <>
-struct type_traits<Document> {
-  enum { node_type_code = document_node };
-  using value_type = Document;
-};
-
-template <>
-struct type_traits<Binary> {
-  enum { node_type_code = binary_node };
-  using value_type = Binary;
-};
+using byte   = uint8_t;
+using Binary = std::pair<const void *, int32_t>;
 
 class Node {
 public:
   explicit Node(const byte *data)
       : data_{data} {}
 
-  BsonNodeType type() const noexcept {
-    return static_cast<BsonNodeType>(*data_);
+  bson::NodeType type() const noexcept {
+    return static_cast<bson::NodeType>(*data_);
   }
 
   std::string_view name() const noexcept {
@@ -149,31 +79,31 @@ public:
     int result = 1 /*type*/ + this->name().size() + 1 /*\0*/;
 
     switch (this->type()) {
-    case double_node:
+    case bson::double_node:
       result += sizeof(double);
       break;
-    case document_node:
-    case array_node:
+    case bson::document_node:
+    case bson::array_node:
       result += *reinterpret_cast<const int *>(data_ + result);
       break;
-    case string_node:
+    case bson::string_node:
       result += (sizeof(int) + *reinterpret_cast<const int *>(data_ + result));
       break;
-    case binary_node:
+    case bson::binary_node:
       result += (sizeof(int) + *reinterpret_cast<const int *>(data_ + result) +
                  1 /*\0*/);
       break;
-    case boolean_node:
+    case bson::boolean_node:
       result += 1;
-    case null_node:
+    case bson::null_node:
       break;
-    case int32_node:
+    case bson::int32_node:
       result += sizeof(int32_t);
       break;
-    case int64_node:
+    case bson::int64_node:
       result += sizeof(int64_t);
       break;
-    case unknown_node:
+    case bson::unknown_node:
       result = 0;
       break;
     };
@@ -184,31 +114,18 @@ public:
   /**\return value in current node
    * \throw bson::BadCast if can not convert
    */
-  template <class ReturnType>
-  ReturnType value() const noexcept(false) {
-    using value_type = typename type_traits<ReturnType>::value_type;
+  template <class InputType>
+  typename type_traits<InputType>::return_type value() const noexcept(false) {
+    constexpr typename type_traits<InputType>::return_type (*converter)(
+        const void *) = type_traits<InputType>::converter;
 
-    if (this->type() != type_traits<ReturnType>::node_type_code) {
+    if (this->type() != type_traits<InputType>::node_type_code) {
       throw bson::BadCast{};
     }
 
     const byte *offset = data_ + 1 /*type*/ + this->name().size() + 1 /*\0*/;
 
-    if constexpr (std::is_same<value_type, Document>::value ||
-                  std::is_same<value_type, Array>::value) {
-      return value_type{offset, *reinterpret_cast<const int *>(offset)};
-    } else if constexpr (std::is_same<value_type, std::string>::value ||
-                         std::is_same<value_type, std::string_view>::value) {
-      return value_type{reinterpret_cast<const char *>(
-          offset + 4 /*+4 because string serialized with size*/)};
-    } else if constexpr (std::is_void<value_type>::value) {
-      return;
-    } else if constexpr (std::is_same<value_type, Binary>::value) {
-      return value_type{offset + 4 /*size*/ + 1 /*subtype*/,
-                        *reinterpret_cast<const int *>(offset)};
-    } else {
-      return *reinterpret_cast<const value_type *>(offset);
-    }
+    return converter(offset);
   }
 
   const void *data() const noexcept { return data_; }
@@ -281,6 +198,14 @@ public:
 
     Node operator*() noexcept { return Node{offset_}; }
 
+    bson::NodeType   type() const noexcept { return Node{offset_}.type(); }
+    std::string_view name() const noexcept { return Node{offset_}.name(); }
+
+    template <class InputType>
+    typename type_traits<InputType>::return_type value() const {
+      return Node{offset_}.value<InputType>();
+    }
+
   private:
     /**\param toEnd move iterator to end of current document
      */
@@ -304,7 +229,7 @@ public:
 
   ConstIterator end() const noexcept { return ConstIterator{data_, true}; }
 
-  template <class ValueType>
+  template <class InputType>
   bool contains(std::string_view key) const noexcept;
 
   /**\brief same as template function contains, but not check type
@@ -315,8 +240,9 @@ public:
    * \brief this safely function for get value from bson array by index, BUT!:
    * this is very slowly. Use iterator where ever it possible
    */
-  template <class ValueType>
-  ValueType get(std::string_view key) const noexcept(false);
+  template <class InputType>
+  typename type_traits<InputType>::return_type get(std::string_view key) const
+      noexcept(false);
 
 private:
   const byte *data_;
@@ -330,14 +256,134 @@ public:
    * \brief this safely function for get value from bson array by index, BUT!:
    * this is very slowly. Use iterator where ever it possible
    */
-  template <class ReturnType>
-  ReturnType at(int i) const noexcept(false);
+  template <class InputType>
+  typename type_traits<InputType>::return_type at(int i) const noexcept(false);
 
   template <class T>
   bool contains(std::string_view) const noexcept = delete;
 
   template <class T>
   T get(std::string_view) const = delete;
+};
+
+template <>
+struct type_traits<double> {
+  enum { node_type_code = bson::double_node };
+  using value_type  = double;
+  using return_type = double;
+  static double converter(const void *ptr) {
+    return *reinterpret_cast<const double *>(ptr);
+  }
+};
+
+template <>
+struct type_traits<float> {
+  enum { node_type_code = bson::double_node };
+  using value_type  = double;
+  using return_type = float;
+  static double converter(const void *ptr) {
+    return *reinterpret_cast<const double *>(ptr);
+  }
+};
+
+template <>
+struct type_traits<int32_t> {
+  enum { node_type_code = bson::int32_node };
+  using value_type  = int32_t;
+  using return_type = int32_t;
+  static int32_t converter(const void *ptr) {
+    return *reinterpret_cast<const int32_t *>(ptr);
+  }
+};
+
+template <>
+struct type_traits<int64_t> {
+  enum { node_type_code = bson::int64_node };
+  using value_type  = int64_t;
+  using return_type = int64_t;
+  static int64_t converter(const void *ptr) {
+    return *reinterpret_cast<const int64_t *>(ptr);
+  }
+};
+
+template <>
+struct type_traits<long long int> {
+  enum { node_type_code = bson::int64_node };
+  using value_type  = int64_t;
+  using return_type = long long int;
+  static long long int converter(const void *ptr) {
+    return *reinterpret_cast<const long long int *>(ptr);
+  }
+};
+
+template <>
+struct type_traits<std::string> {
+  enum { node_type_code = bson::string_node };
+  using value_type  = std::string_view;
+  using return_type = std::string;
+  static std::string converter(const void *ptr) {
+    return reinterpret_cast<const char *>(ptr) + 4 /*size*/;
+  }
+};
+
+template <>
+struct type_traits<std::string_view> {
+  enum { node_type_code = bson::string_node };
+  using value_type  = std::string_view;
+  using return_type = std::string_view;
+  static std::string_view converter(const void *ptr) {
+    return reinterpret_cast<const char *>(ptr) + 4 /*size*/;
+  }
+};
+
+template <>
+struct type_traits<bool> {
+  enum { node_type_code = bson::boolean_node };
+  using value_type  = bool;
+  using return_type = bool;
+  static bool converter(const void *ptr) {
+    return *reinterpret_cast<const byte *>(ptr);
+  }
+};
+
+template <>
+struct type_traits<void> {
+  enum { node_type_code = bson::null_node };
+  using value_type  = void;
+  using return_type = void;
+  static void converter(const void *) { return; }
+};
+
+template <>
+struct type_traits<Array> {
+  enum { node_type_code = bson::array_node };
+  using value_type  = Array;
+  using return_type = Array;
+  static Array converter(const void *ptr) {
+    return Array{ptr, *reinterpret_cast<const int *>(ptr)};
+  }
+};
+
+template <>
+struct type_traits<Document> {
+  enum { node_type_code = bson::document_node };
+  using value_type  = Document;
+  using return_type = Document;
+  static Document converter(const void *ptr) {
+    return Document{ptr, *reinterpret_cast<const int *>(ptr)};
+  }
+};
+
+template <>
+struct type_traits<Binary> {
+  enum { node_type_code = bson::binary_node };
+  using value_type  = Binary;
+  using return_type = Binary;
+  static Binary converter(const void *ptr) {
+    return Binary{reinterpret_cast<const byte *>(ptr) + 4 /*size*/ +
+                      1 /*subtype*/,
+                  *reinterpret_cast<const int *>(ptr)};
+  }
 };
 } // namespace microbson
 
@@ -354,7 +400,7 @@ inline int Document::size() const noexcept {
   return std::distance(this->begin(), this->end());
 }
 
-template <class ValueType>
+template <class InputType>
 bool Document::contains(std::string_view key) const noexcept {
   if (auto found = std::find_if(
           this->begin(),
@@ -369,7 +415,7 @@ bool Document::contains(std::string_view key) const noexcept {
             return false;
           });
       found != this->end()) {
-    if ((*found).type() == type_traits<ValueType>::node_type_code) {
+    if ((*found).type() == type_traits<InputType>::node_type_code) {
       return true; // only with same key and type
     }
   }
@@ -394,8 +440,9 @@ bool Document::contains(std::string_view key) const noexcept {
   return false;
 }
 
-template <class ReturnType>
-ReturnType Document::get(std::string_view key) const {
+template <class InputType>
+typename type_traits<InputType>::return_type
+Document::get(std::string_view key) const {
   if (auto found = std::find_if(this->begin(),
                                 this->end(),
                                 [key](Node node) {
@@ -406,19 +453,19 @@ ReturnType Document::get(std::string_view key) const {
                                   return false;
                                 });
       found != this->end()) {
-    return (*found).template value<ReturnType>();
+    return (*found).template value<InputType>();
   } else {
     throw bson::OutOfRange{"no value by key: " + std::string{key}};
   }
 }
 
-template <class ReturnType>
-ReturnType Array::at(int i) const {
+template <class InputType>
+typename type_traits<InputType>::return_type Array::at(int i) const {
   auto iter = this->begin();
   for (int counter = 0; iter != this->end() && counter < i; ++iter, ++counter)
     ;
   if (iter != this->end()) {
-    return (*iter).template value<ReturnType>();
+    return (*iter).template value<InputType>();
   } else {
     throw bson::OutOfRange{"no value by index: " + std::to_string(i)};
   }

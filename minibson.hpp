@@ -18,27 +18,6 @@
 namespace minibson {
 using byte = uint8_t;
 
-enum BsonNodeType {
-  double_node   = 0x01,
-  string_node   = 0x02,
-  document_node = 0x03,
-  array_node    = 0x04,
-  binary_node   = 0x05,
-  boolean_node  = 0x08,
-  null_node     = 0x0A,
-  int32_node    = 0x10,
-  int64_node    = 0x12,
-  unknown_node  = 0xFF
-};
-
-// needed for prevent warning about enum compare
-bool operator==(BsonNodeType lhs, int rhs) {
-  return int(lhs) == rhs;
-}
-bool operator!=(BsonNodeType lhs, int rhs) {
-  return int(lhs) != rhs;
-}
-
 class Document;
 class Array;
 class Binary;
@@ -48,93 +27,104 @@ struct type_traits {};
 
 template <>
 struct type_traits<double> {
-  enum { node_type_code = double_node };
-  using value_type = double;
+  enum { node_type_code = bson::double_node };
+  using value_type  = double;
+  using return_type = double;
 };
 
 template <>
 struct type_traits<float> {
-  enum { node_type_code = double_node };
-  using value_type = double;
+  enum { node_type_code = bson::double_node };
+  using value_type  = double;
+  using return_type = double;
 };
 
 template <>
 struct type_traits<int32_t> {
-  enum { node_type_code = int32_node };
-  using value_type = int32_t;
+  enum { node_type_code = bson::int32_node };
+  using value_type  = int32_t;
+  using return_type = int32_t;
 };
 
 template <>
 struct type_traits<int64_t> {
-  enum { node_type_code = int64_node };
-  using value_type = int64_t;
+  enum { node_type_code = bson::int64_node };
+  using value_type  = int64_t;
+  using return_type = int64_t;
 };
 
 template <>
 struct type_traits<long long int> {
-  enum { node_type_code = int64_node };
-  using value_type = int64_t;
+  enum { node_type_code = bson::int64_node };
+  using value_type  = int64_t;
+  using return_type = int64_t;
 };
 
 template <>
 struct type_traits<std::string> {
-  enum { node_type_code = string_node };
-  using value_type = std::string;
+  enum { node_type_code = bson::string_node };
+  using value_type  = std::string;
+  using return_type = std::string;
 };
 
 template <>
 struct type_traits<std::string_view> {
-  enum { node_type_code = string_node };
-  using value_type = std::string;
-};
-
-template <>
-struct type_traits<char *> {
-  enum { node_type_code = string_node };
-  using value_type = std::string;
+  enum { node_type_code = bson::string_node };
+  using value_type  = std::string;
+  using return_type = std::string_view;
 };
 
 template <>
 struct type_traits<const char *> {
-  enum { node_type_code = string_node };
-  using value_type = std::string;
+  enum { node_type_code = bson::string_node };
+  using value_type  = std::string;
+  using return_type = const char *;
+
+  static return_type converter(const value_type &value) {
+    return value.c_str();
+  }
 };
 
 template <>
 struct type_traits<bool> {
-  enum { node_type_code = boolean_node };
-  using value_type = bool;
+  enum { node_type_code = bson::boolean_node };
+  using value_type  = bool;
+  using return_type = bool;
 };
 
 template <>
 struct type_traits<void> {
-  enum { node_type_code = null_node };
-  using value_type = void;
+  enum { node_type_code = bson::null_node };
+  using value_type  = void;
+  using return_type = void;
 };
 
 template <>
 struct type_traits<Array> {
-  enum { node_type_code = array_node };
-  using value_type = Array;
+  enum { node_type_code = bson::array_node };
+  using value_type  = Array;
+  using return_type = Array;
 };
 
 template <>
 struct type_traits<Document> {
-  enum { node_type_code = document_node };
-  using value_type = Document;
+  enum { node_type_code = bson::document_node };
+  using value_type  = Document;
+  using return_type = Document;
 };
 
 template <>
 struct type_traits<Binary> {
-  enum { node_type_code = binary_node };
-  using value_type = Binary;
+  enum { node_type_code = bson::binary_node };
+  using value_type  = Binary;
+  using return_type = Binary;
 };
 
 class NodeValue {
 public:
   virtual ~NodeValue() = default;
 
-  virtual BsonNodeType type() const noexcept = 0;
+  virtual bson::NodeType type() const noexcept = 0;
   /**\param buf where will be writed data
    * \param length max capacity of bytes for serialization
    * \return capacity of serialized bytes
@@ -152,15 +142,15 @@ using UNodeValue = std::unique_ptr<NodeValue>;
 template <class T>
 class NodeValueT final : public NodeValue {
 public:
-  using value_type = typename type_traits<T>::value_type;
+  using value_type = T;
 
   explicit NodeValueT(const T &val)
       : val_{val} {}
   explicit NodeValueT(T &&val)
       : val_{std::move(val)} {}
 
-  BsonNodeType type() const noexcept override {
-    return static_cast<BsonNodeType>(type_traits<T>::node_type_code);
+  bson::NodeType type() const noexcept override {
+    return static_cast<bson::NodeType>(type_traits<T>::node_type_code);
   }
 
   const value_type &value() const noexcept { return val_; }
@@ -210,12 +200,12 @@ private:
 template <>
 class NodeValueT<void> final : public NodeValue {
 public:
-  using value_type = typename type_traits<void>::value_type;
+  using value_type = void;
 
   NodeValueT() = default;
 
-  BsonNodeType type() const noexcept override {
-    return static_cast<BsonNodeType>(type_traits<void>::node_type_code);
+  bson::NodeType type() const noexcept override {
+    return static_cast<bson::NodeType>(type_traits<void>::node_type_code);
   }
   int getSerializedSize() const noexcept override { return 0; }
   int serialize(void *, int) const override { return 0; }
@@ -246,8 +236,8 @@ public:
   Binary(std::vector<byte> &&buf)
       : buf_(std::move(buf)) {}
 
-  BsonNodeType type() const noexcept { return binary_node; }
-  int          getSerializedSize() const noexcept {
+  bson::NodeType type() const noexcept { return bson::binary_node; }
+  int            getSerializedSize() const noexcept {
     return 4 /*size*/ + 1 /*subtype*/ + buf_.size();
   }
   int serialize(void *buf, int bufSize) const {
@@ -265,7 +255,6 @@ public:
     return 4 /*size*/ + 1 /*subtype*/ + size;
   }
 
-private:
   std::vector<byte> buf_;
 };
 
@@ -278,9 +267,11 @@ public:
    * \throw bson::InvalidArgument if can not deserialize bson
    */
   Document(const void *buffer, int length);
+  Document(const Document &) = delete;
+  Document(Document &&)      = default;
 
-  BsonNodeType type() const noexcept { return document_node; }
-  int          getSerializedSize() const noexcept {
+  bson::NodeType type() const noexcept { return bson::document_node; }
+  int            getSerializedSize() const noexcept {
     int count = 4 /*size*/;
     for (auto &[name, val] : doc_) {
       count += 1 /*type*/ + name.size() + 1 /*\0*/ + val->getSerializedSize();
@@ -295,13 +286,19 @@ public:
   /**\throw bson::OutOfRange if not have the value, or bson::BadCast if have not
    * same type
    */
-  template <class ReturnType>
-  const ReturnType &get(const std::string &key) const noexcept(false) {
-    using value_type = typename type_traits<ReturnType>::value_type;
-    static_assert(std::is_same<value_type, ReturnType>::value);
+  template <
+      class InputType,
+      typename std::enable_if<
+          std::is_same<typename type_traits<InputType>::return_type,
+                       typename type_traits<InputType>::value_type>::value &&
+          !std::is_fundamental<InputType>::value>::type>
+  const typename type_traits<InputType>::return_type &
+  get(const std::string &key) const noexcept(false) {
+    using value_type           = typename type_traits<InputType>::value_type;
+    constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
     if (auto found = doc_.find(key); found != doc_.end()) {
-      if (type_traits<ReturnType>::node_type_code == found->second->type()) {
+      if (found->second->type() == nodeTypeCode) {
         return reinterpret_cast<const NodeValueT<value_type> *>(
                    found->second.get())
             ->value();
@@ -313,15 +310,55 @@ public:
     }
   }
 
-  template <class ReturnType>
-  ReturnType &get(const std::string &key) noexcept(false) {
-    using value_type = typename type_traits<ReturnType>::value_type;
-    static_assert(std::is_same<value_type, ReturnType>::value);
+  template <
+      class InputType,
+      typename = typename std::enable_if<
+          std::is_same<typename type_traits<InputType>::return_type,
+                       typename type_traits<InputType>::value_type>::value &&
+          !std::is_fundamental<InputType>::value>::type>
+  typename type_traits<InputType>::return_type &
+  get(const std::string &key) noexcept(false) {
+    using value_type           = typename type_traits<InputType>::value_type;
+    constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
     if (auto found = doc_.find(key); found != doc_.end()) {
-      if (found->second->type() == type_traits<ReturnType>::node_type_code) {
+      if (found->second->type() == nodeTypeCode) {
         return reinterpret_cast<NodeValueT<value_type> *>(found->second.get())
             ->value();
+      } else {
+        throw bson::BadCast{};
+      }
+    } else {
+      throw bson::OutOfRange{"hame not value by key: " + std::string{key}};
+    }
+  }
+
+  template <
+      class InputType,
+      typename = typename std::enable_if<
+          !std::is_same<typename type_traits<InputType>::return_type,
+                        typename type_traits<InputType>::value_type>::value ||
+          std::is_fundamental<InputType>::value>::type>
+  typename type_traits<InputType>::return_type get(const std::string &key) const
+      noexcept(false) {
+    using value_type           = typename type_traits<InputType>::value_type;
+    using return_type          = typename type_traits<InputType>::return_type;
+    constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
+
+    if (auto found = doc_.find(key); found != doc_.end()) {
+      if (found->second->type() == nodeTypeCode) {
+        if constexpr (std::is_convertible<value_type, return_type>::value) {
+          return reinterpret_cast<const NodeValueT<value_type> *>(
+                     found->second.get())
+              ->value();
+        } else {
+          constexpr return_type (*converter)(const value_type &) =
+              type_traits<InputType>::converter;
+
+          return converter(reinterpret_cast<const NodeValueT<value_type> *>(
+                               found->second.get())
+                               ->value());
+        }
       } else {
         throw bson::BadCast{};
       }
@@ -390,18 +427,53 @@ public:
       return this->imp_ != rhs.imp_;
     }
 
-    const std::string &name() const { return imp_->first; }
+    bson::NodeType     type() const noexcept { return imp_->second->type(); }
+    const std::string &name() const noexcept { return imp_->first; }
 
     /**\throw bson::BadCast
      */
-    template <class ReturnType>
-    ReturnType &value() noexcept(false) {
-      using value_type = typename type_traits<ReturnType>::value_type;
-      static_assert(std::is_same<value_type, ReturnType>::value);
+    template <
+        class InputType,
+        typename = typename std::enable_if<
+            std::is_same<typename type_traits<InputType>::return_type,
+                         typename type_traits<InputType>::value_type>::value &&
+            !std::is_fundamental<InputType>::value>::type>
+    typename type_traits<InputType>::return_type &value() const
+        noexcept(false) {
+      using value_type           = typename type_traits<InputType>::value_type;
+      constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if (imp_->second->type() == type_traits<ReturnType>::node_type_code) {
-        return reinterpret_cast<NodeValueT<ReturnType> *>(imp_->second.get())
+      if (imp_->second->type() == nodeTypeCode) {
+        return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
             ->value();
+      }
+
+      throw bson::BadCast{};
+    }
+
+    template <
+        class InputType,
+        typename = typename std::enable_if<
+            !std::is_same<typename type_traits<InputType>::return_type,
+                          typename type_traits<InputType>::value_type>::value ||
+            std::is_fundamental<InputType>::value>::type>
+    typename type_traits<InputType>::return_type value() const noexcept(false) {
+      using value_type           = typename type_traits<InputType>::value_type;
+      using return_type          = typename type_traits<InputType>::return_type;
+      constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
+
+      if (imp_->second->type() == nodeTypeCode) {
+        if constexpr (std::is_convertible<value_type, return_type>::value) {
+          return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+              ->value();
+        } else {
+          constexpr return_type (*converter)(const value_type &) =
+              type_traits<InputType>::converter;
+
+          return converter(
+              reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+                  ->value());
+        }
       }
 
       throw bson::BadCast{};
@@ -435,18 +507,53 @@ public:
       return this->imp_ != rhs.imp_;
     }
 
-    const std::string &name() const { return imp_->first; }
+    bson::NodeType     type() const noexcept { return imp_->second->type(); }
+    const std::string &name() const noexcept { return imp_->first; }
 
     /**\throw bson::BadCast
      */
-    template <class ReturnType>
-    const ReturnType &value() const noexcept(false) {
-      using value_type = typename type_traits<ReturnType>::value_type;
-      static_assert(std::is_same<value_type, ReturnType>::value);
+    template <
+        class InputType,
+        typename = typename std::enable_if<
+            std::is_same<typename type_traits<InputType>::return_type,
+                         typename type_traits<InputType>::value_type>::value &&
+            !std::is_fundamental<InputType>::value>::type>
+    const typename type_traits<InputType>::return_type &value() const
+        noexcept(false) {
+      using value_type           = typename type_traits<InputType>::value_type;
+      constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if (imp_->second->type() == type_traits<ReturnType>::node_type_code) {
-        return reinterpret_cast<NodeValueT<ReturnType> *>(imp_->second.get())
+      if (imp_->second->type() == nodeTypeCode) {
+        return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
             ->value();
+      }
+
+      throw bson::BadCast{};
+    }
+
+    template <
+        class InputType,
+        typename = typename std::enable_if<
+            !std::is_same<typename type_traits<InputType>::return_type,
+                          typename type_traits<InputType>::value_type>::value ||
+            std::is_fundamental<InputType>::value>::type>
+    typename type_traits<InputType>::return_type value() const noexcept(false) {
+      using value_type           = typename type_traits<InputType>::value_type;
+      using return_type          = typename type_traits<InputType>::return_type;
+      constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
+
+      if (imp_->second->type() == nodeTypeCode) {
+        if constexpr (std::is_convertible<value_type, return_type>::value) {
+          return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+              ->value();
+        } else {
+          constexpr return_type (*converter)(const value_type &) =
+              type_traits<InputType>::converter;
+
+          return converter(
+              reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+                  ->value());
+        }
       }
 
       throw bson::BadCast{};
@@ -473,9 +580,11 @@ class Array final {
 public:
   Array() = default;
   Array(const void *buf, int length);
+  Array(const Array &) = delete;
+  Array(Array &&)      = default;
 
-  BsonNodeType type() const noexcept { return array_node; }
-  int          getSerializedSize() const noexcept {
+  bson::NodeType type() const noexcept { return bson::array_node; }
+  int            getSerializedSize() const noexcept {
     int count = 4 /*size*/;
     for (size_t i = 0; i < arr_.size(); ++i) {
       count += 1 /*type*/ + std::to_string(i).size() + 1 /*\0*/ +
@@ -489,36 +598,77 @@ public:
 
   /**\throw bson::OutOfRange or bson::BadCast
    */
-  template <class ReturnType>
-  const ReturnType &at(int i) const noexcept(false) {
-    using value_type = typename type_traits<ReturnType>::value_type;
-    static_assert(std::is_same<ReturnType, value_type>::value);
+  template <
+      class InputType,
+      typename = typename std::enable_if<
+          std::is_same<typename type_traits<InputType>::return_type,
+                       typename type_traits<InputType>::value_type>::value &&
+          !std::is_fundamental<InputType>::value>::type>
+  const typename type_traits<InputType>::return_type &at(int i) const
+      noexcept(false) {
+    using value_type           = typename type_traits<InputType>::value_type;
+    constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
     if (arr_.size() < size_t(i)) {
       throw bson::OutOfRange{"have not value by index: " + std::to_string(i)};
     }
 
-    if (arr_[i]->type() != type_traits<ReturnType>::value_type) {
+    if (arr_[i]->type() != nodeTypeCode) {
       throw bson::BadCast{};
     }
 
     return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
   }
 
-  template <class ReturnType>
-  ReturnType &at(int i) noexcept(false) {
-    using value_type = typename type_traits<ReturnType>::value_type;
-    static_assert(std::is_same<ReturnType, value_type>::value);
+  template <
+      class InputType,
+      typename = typename std::enable_if<
+          std::is_same<typename type_traits<InputType>::return_type,
+                       typename type_traits<InputType>::value_type>::value &&
+          !std::is_fundamental<InputType>::value>::type>
+  typename type_traits<InputType>::return_type &at(int i) noexcept(false) {
+    using value_type           = typename type_traits<InputType>::value_type;
+    constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
     if (arr_.size() < size_t(i)) {
       throw bson::OutOfRange{"have not value by index: " + std::to_string(i)};
     }
 
-    if (arr_[i]->type() != type_traits<ReturnType>::value_type) {
+    if (arr_[i]->type() != nodeTypeCode) {
       throw bson::BadCast{};
     }
 
     return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
+  }
+
+  template <
+      class InputType,
+      typename = typename std::enable_if<
+          !std::is_same<typename type_traits<InputType>::return_type,
+                        typename type_traits<InputType>::value_type>::value ||
+          std::is_fundamental<InputType>::value>::type>
+  typename type_traits<InputType>::return_type at(int i) const noexcept(false) {
+    using value_type           = typename type_traits<InputType>::value_type;
+    using return_type          = typename type_traits<InputType>::return_type;
+    constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
+
+    if (arr_.size() < size_t(i)) {
+      throw bson::OutOfRange{"have not value by index: " + std::to_string(i)};
+    }
+
+    if (arr_[i]->type() != nodeTypeCode) {
+      throw bson::BadCast{};
+    }
+
+    if constexpr (std::is_convertible<value_type, return_type>::value) {
+      return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
+    } else {
+      constexpr return_type (*converter)(const value_type &) =
+          type_traits<InputType>::converter;
+
+      return converter(
+          reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value());
+    }
   }
 
   template <class InsertType>
@@ -565,18 +715,53 @@ public:
       return this->imp_ != rhs.imp_;
     }
 
-    std::string name() const { return std::to_string(num_); }
+    bson::NodeType type() const noexcept { return (*imp_)->type(); }
+    std::string    name() const noexcept { return std::to_string(num_); }
 
     /**\throw bson::BadCast
      */
-    template <class ReturnType>
-    ReturnType &value() noexcept(false) {
-      using value_type = typename type_traits<ReturnType>::value_type;
-      static_assert(std::is_same<value_type, ReturnType>::value);
+    template <
+        class InputType,
+        typename = typename std::enable_if<
+            std::is_same<typename type_traits<InputType>::return_type,
+                         typename type_traits<InputType>::value_type>::value &&
+            !std::is_fundamental<InputType>::value>::type>
+    typename type_traits<InputType>::return_type &value() const
+        noexcept(false) {
+      using value_type           = typename type_traits<InputType>::value_type;
+      constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if ((*imp_)->type() == type_traits<ReturnType>::node_type_code) {
-        return reinterpret_cast<NodeValueT<ReturnType> *>((*imp_).get())
+      if ((*imp_)->type() == nodeTypeCode) {
+        return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
             ->value();
+      }
+
+      throw bson::BadCast{};
+    }
+
+    template <
+        class InputType,
+        typename = typename std::enable_if<
+            !std::is_same<typename type_traits<InputType>::return_type,
+                          typename type_traits<InputType>::value_type>::value ||
+            std::is_fundamental<InputType>::value>::type>
+    typename type_traits<InputType>::return_type value() const noexcept(false) {
+      using value_type           = typename type_traits<InputType>::value_type;
+      using return_type          = typename type_traits<InputType>::return_type;
+      constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
+
+      if ((*imp_)->type() == nodeTypeCode) {
+        if constexpr (std::is_convertible<value_type, return_type>::value) {
+          return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+              ->value();
+        } else {
+          constexpr return_type (*converter)(const value_type &) =
+              type_traits<InputType>::converter;
+
+          return converter(
+              reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+                  ->value());
+        }
       }
 
       throw bson::BadCast{};
@@ -613,18 +798,53 @@ public:
       return this->imp_ != rhs.imp_;
     }
 
-    std::string name() const { return std::to_string(num_); }
+    bson::NodeType type() const noexcept { return (*imp_)->type(); }
+    std::string    name() const noexcept { return std::to_string(num_); }
 
     /**\throw bson::BadCast
      */
-    template <class ReturnType>
-    ReturnType &value() noexcept(false) {
-      using value_type = typename type_traits<ReturnType>::value_type;
-      static_assert(std::is_same<value_type, ReturnType>::value);
+    template <
+        class InputType,
+        typename = typename std::enable_if<
+            std::is_same<typename type_traits<InputType>::return_type,
+                         typename type_traits<InputType>::value_type>::value &&
+            !std::is_fundamental<InputType>::value>::type>
+    const typename type_traits<InputType>::return_type &value() const
+        noexcept(false) {
+      using value_type           = typename type_traits<InputType>::value_type;
+      constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if ((*imp_)->type() == type_traits<ReturnType>::node_type_code) {
-        return reinterpret_cast<NodeValueT<ReturnType> *>((*imp_).get())
+      if ((*imp_)->type() == nodeTypeCode) {
+        return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
             ->value();
+      }
+
+      throw bson::BadCast{};
+    }
+
+    template <
+        class InputType,
+        typename = typename std::enable_if<
+            !std::is_same<typename type_traits<InputType>::return_type,
+                          typename type_traits<InputType>::value_type>::value ||
+            std::is_fundamental<InputType>::value>::type>
+    typename type_traits<InputType>::return_type value() const noexcept(false) {
+      using value_type           = typename type_traits<InputType>::value_type;
+      using return_type          = typename type_traits<InputType>::return_type;
+      constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
+
+      if ((*imp_)->type() == nodeTypeCode) {
+        if constexpr (std::is_convertible<value_type, return_type>::value) {
+          return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+              ->value();
+        } else {
+          constexpr return_type (*converter)(const value_type &) =
+              type_traits<InputType>::converter;
+
+          return converter(
+              reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+                  ->value());
+        }
       }
 
       throw bson::BadCast{};
@@ -653,44 +873,44 @@ Document::Document(const void *buffer, int length) {
   for (auto i = doc.begin(); i != doc.end(); ++i) {
     microbson::Node node = *i;
     switch (node.type()) {
-    case microbson::string_node:
+    case bson::string_node:
       doc_.emplace(node.name(),
                    UNodeValueFactory::create(node.value<std::string_view>()));
       break;
-    case microbson::boolean_node:
+    case bson::boolean_node:
       doc_.emplace(node.name(), UNodeValueFactory::create(node.value<bool>()));
       break;
-    case microbson::int32_node:
+    case bson::int32_node:
       doc_.emplace(node.name(),
                    UNodeValueFactory::create(node.value<int32_t>()));
       break;
-    case microbson::int64_node:
+    case bson::int64_node:
       doc_.emplace(node.name(),
                    UNodeValueFactory::create(node.value<int64_t>()));
       break;
-    case microbson::double_node:
+    case bson::double_node:
       doc_.emplace(node.name(),
                    UNodeValueFactory::create(node.value<double>()));
       break;
-    case microbson::null_node:
+    case bson::null_node:
       doc_.emplace(node.name(), UNodeValueFactory::create());
       break;
-    case microbson::array_node:
+    case bson::array_node:
       doc_.emplace(
           node.name(),
           UNodeValueFactory::create(Array{node.data(), node.length()}));
       break;
-    case microbson::document_node:
+    case bson::document_node:
       doc_.emplace(
           node.name(),
           UNodeValueFactory::create(Document{node.data(), node.length()}));
       break;
-    case microbson::binary_node:
+    case bson::binary_node:
       doc_.emplace(
           node.name(),
           UNodeValueFactory::create(Binary{node.data(), node.length()}));
       break;
-    case microbson::unknown_node:
+    case bson::unknown_node:
       throw bson::InvalidArgument{"unknown node by key: " +
                                   std::string{node.name()}};
       break;
@@ -734,38 +954,38 @@ Array::Array(const void *buffer, int length) {
   for (auto i = doc.begin(); i != doc.end(); ++i) {
     microbson::Node node = *i;
     switch (node.type()) {
-    case microbson::string_node:
+    case bson::string_node:
       arr_.emplace_back(
           UNodeValueFactory::create(node.value<std::string_view>()));
       break;
-    case microbson::boolean_node:
+    case bson::boolean_node:
       arr_.emplace_back(UNodeValueFactory::create(node.value<bool>()));
       break;
-    case microbson::int32_node:
+    case bson::int32_node:
       arr_.emplace_back(UNodeValueFactory::create(node.value<int32_t>()));
       break;
-    case microbson::int64_node:
+    case bson::int64_node:
       arr_.emplace_back(UNodeValueFactory::create(node.value<int64_t>()));
       break;
-    case microbson::double_node:
+    case bson::double_node:
       arr_.emplace_back(UNodeValueFactory::create(node.value<double>()));
       break;
-    case microbson::null_node:
+    case bson::null_node:
       arr_.emplace_back(UNodeValueFactory::create());
       break;
-    case microbson::array_node:
+    case bson::array_node:
       arr_.emplace_back(
           UNodeValueFactory::create(Array{node.data(), node.length()}));
       break;
-    case microbson::document_node:
+    case bson::document_node:
       arr_.emplace_back(
           UNodeValueFactory::create(Document{node.data(), node.length()}));
       break;
-    case microbson::binary_node:
+    case bson::binary_node:
       arr_.emplace_back(
           UNodeValueFactory::create(Binary{node.data(), node.length()}));
       break;
-    case microbson::unknown_node:
+    case bson::unknown_node:
       throw bson::InvalidArgument{"unknown node by index: " +
                                   std::string{node.name()}};
       break;
