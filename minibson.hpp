@@ -36,7 +36,7 @@ template <>
 struct type_traits<float> {
   enum { node_type_code = bson::double_node };
   using value_type  = double;
-  using return_type = double;
+  using return_type = float;
 };
 
 template <>
@@ -144,10 +144,24 @@ class NodeValueT final : public NodeValue {
 public:
   using value_type = T;
 
-  explicit NodeValueT(const T &val)
-      : val_{val} {}
-  explicit NodeValueT(T &&val)
-      : val_{std::move(val)} {}
+  explicit NodeValueT(const T &val) noexcept
+      : val_{val} {
+    // prevent wrong values types
+    static_assert(
+        std::is_same<T, double>::value || std::is_same<T, std::string>::value ||
+        std::is_same<T, Document>::value || std::is_same<T, Array>::value ||
+        std::is_same<T, Binary>::value || std::is_same<T, bool>::value ||
+        std::is_same<T, int32_t>::value || std::is_same<T, int64_t>::value);
+  }
+  explicit NodeValueT(T &&val) noexcept
+      : val_{std::move(val)} {
+    // prevent wrong values types
+    static_assert(
+        std::is_same<T, double>::value || std::is_same<T, std::string>::value ||
+        std::is_same<T, Document>::value || std::is_same<T, Array>::value ||
+        std::is_same<T, Binary>::value || std::is_same<T, bool>::value ||
+        std::is_same<T, int32_t>::value || std::is_same<T, int64_t>::value);
+  }
 
   bson::NodeType type() const noexcept override {
     return static_cast<bson::NodeType>(type_traits<T>::node_type_code);
@@ -202,7 +216,7 @@ class NodeValueT<void> final : public NodeValue {
 public:
   using value_type = void;
 
-  NodeValueT() = default;
+  NodeValueT() noexcept = default;
 
   bson::NodeType type() const noexcept override {
     return static_cast<bson::NodeType>(type_traits<void>::node_type_code);
@@ -213,14 +227,37 @@ public:
 
 class UNodeValueFactory {
 public:
-  template <class T>
-  static UNodeValue create(T &&val) {
-    return std::make_unique<NodeValueT<T>>(std::move(val));
+  template <class InputType>
+  static UNodeValue create(InputType &&val) noexcept {
+    using value_type = typename type_traits<InputType>::value_type;
+
+    if constexpr (std::is_same<InputType, value_type>::value) {
+      return std::make_unique<NodeValueT<value_type>>(std::move(val));
+    } else if constexpr (std::is_convertible<InputType,
+                                             const value_type &>::value) {
+      return std::make_unique<NodeValueT<value_type>>(val);
+    } else if constexpr (std::is_nothrow_constructible<InputType,
+                                                       value_type>::value) {
+      return std::make_unique<NodeValueT<value_type>>(value_type{val});
+    } else {
+      static_assert(
+          std::is_nothrow_constructible<InputType, value_type>::value);
+    }
   }
 
-  template <class T>
-  static UNodeValue create(const T &val) {
-    return std::make_unique<NodeValueT<T>>(val);
+  template <class InputType>
+  static UNodeValue create(const InputType &val) noexcept {
+    using value_type = typename type_traits<InputType>::value_type;
+
+    if constexpr (std::is_convertible<InputType, const value_type &>::value) {
+      return std::make_unique<NodeValueT<value_type>>(val);
+    } else if constexpr (std::is_nothrow_constructible<InputType,
+                                                       value_type>::value) {
+      return std::make_unique<NodeValueT<value_type>>(value_type{val});
+    } else {
+      static_assert(
+          std::is_nothrow_constructible<InputType, value_type>::value);
+    }
   }
 
   static UNodeValue create() { return std::make_unique<NodeValueT<void>>(); }
@@ -228,13 +265,16 @@ public:
 
 class Binary final {
 public:
-  Binary() = default;
-  Binary(const void *buf, int length) {
+  Binary() noexcept = default;
+  Binary(const void *buf, int length) noexcept {
     buf_.resize(length);
     std::memcpy(buf_.data(), buf, length);
   }
-  Binary(std::vector<byte> &&buf)
+  Binary(std::vector<byte> &&buf) noexcept
       : buf_(std::move(buf)) {}
+
+  Binary(const Binary &)     = delete;
+  Binary(Binary &&) noexcept = default;
 
   bson::NodeType type() const noexcept { return bson::binary_node; }
   int            getSerializedSize() const noexcept {
@@ -260,15 +300,15 @@ public:
 
 class Document final {
 public:
-  Document() = default;
+  Document() noexcept = default;
 
   /**\param buffer pointer to serialized bson document
    * \param length size of buffer, need for validate the document
    * \throw bson::InvalidArgument if can not deserialize bson
    */
-  Document(const void *buffer, int length);
-  Document(const Document &) = delete;
-  Document(Document &&)      = default;
+  Document(const void *buffer, int length) noexcept(false);
+  Document(const Document &)     = delete;
+  Document(Document &&) noexcept = default;
 
   bson::NodeType type() const noexcept { return bson::document_node; }
   int            getSerializedSize() const noexcept {
@@ -288,7 +328,7 @@ public:
    */
   template <
       class InputType,
-      typename std::enable_if<
+      typename = typename std::enable_if<
           std::is_same<typename type_traits<InputType>::return_type,
                        typename type_traits<InputType>::value_type>::value &&
           !std::is_fundamental<InputType>::value>::type>
@@ -310,12 +350,10 @@ public:
     }
   }
 
-  template <
-      class InputType,
-      typename = typename std::enable_if<
-          std::is_same<typename type_traits<InputType>::return_type,
-                       typename type_traits<InputType>::value_type>::value &&
-          !std::is_fundamental<InputType>::value>::type>
+  template <class InputType,
+            typename = typename std::enable_if<std::is_same<
+                typename type_traits<InputType>::return_type,
+                typename type_traits<InputType>::value_type>::value>::type>
   typename type_traits<InputType>::return_type &
   get(const std::string &key) noexcept(false) {
     using value_type           = typename type_traits<InputType>::value_type;
@@ -351,6 +389,11 @@ public:
           return reinterpret_cast<const NodeValueT<value_type> *>(
                      found->second.get())
               ->value();
+        } else if constexpr (std::is_nothrow_constructible<return_type,
+                                                           value_type>::value) {
+          return return_type{reinterpret_cast<const NodeValueT<value_type> *>(
+                                 found->second.get())
+                                 ->value()};
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
@@ -367,21 +410,62 @@ public:
     }
   }
 
-  template <class InsertType>
+  template <class InsertType,
+            typename = typename std::enable_if<
+                !std::is_convertible<InsertType, const char *>::value>::type>
   Document &set(std::string key, const InsertType &val) noexcept {
     doc_.insert_or_assign(std::move(key), UNodeValueFactory::create(val));
     return *this;
   }
 
-  template <class InsertType>
+  template <class InsertType,
+            typename = typename std::enable_if<
+                !std::is_convertible<InsertType, const char *>::value>::type>
   Document &set(std::string key, InsertType &&val) noexcept {
     doc_.insert_or_assign(std::move(key),
                           UNodeValueFactory::create(std::move(val)));
     return *this;
   }
 
+  /**\brief for c-string
+   */
+  template <class InsertType,
+            typename = typename std::enable_if<
+                std::is_convertible<InsertType, const char *>::value>::type>
+  Document &set(std::string key, InsertType val) noexcept {
+    doc_.insert_or_assign(
+        std::move(key),
+        UNodeValueFactory::create(reinterpret_cast<const char *>(val)));
+    return *this;
+  }
+
   Document &set(std::string key) noexcept {
     doc_.insert_or_assign(std::move(key), UNodeValueFactory::create());
+    return *this;
+  }
+
+  template <class InputType, class InsertType>
+  Document &set(std::string key, const InsertType &val) noexcept {
+    using value_type  = typename type_traits<InputType>::value_type;
+    using return_type = typename type_traits<InputType>::return_type;
+    constexpr value_type (*back_converter)(const return_type &) =
+        type_traits<InputType>::back_converter;
+
+    if constexpr (std::is_convertible<
+                      InsertType,
+                      typename type_traits<InputType>::return_type>::value) {
+      doc_.insert_or_assign(std::move(key),
+                            UNodeValueFactory::create(back_converter(val)));
+    } else if constexpr (std::is_nothrow_constructible<return_type,
+                                                       InsertType>::value) {
+      doc_.insert_or_assign(
+          std::move(key),
+          UNodeValueFactory::create(back_converter(return_type{val})));
+    } else {
+      static_assert(
+          std::is_nothrow_constructible<return_type, InsertType>::value);
+    }
+
     return *this;
   }
 
@@ -396,7 +480,7 @@ public:
   bool contains(const std::string &key) const noexcept {
     if (auto found = doc_.find(key);
         found != doc_.end() &&
-        type_traits<Type>::node_type_code == found->second->type()) {
+        found->second->type() == type_traits<Type>::node_type_code) {
       return true;
     }
     return false;
@@ -412,18 +496,30 @@ public:
     using imp_iter_type = std::map<std::string, UNodeValue>::iterator;
 
   public:
-    Iterator() = default;
+    Iterator() noexcept = default;
 
-    Iterator &operator++() {
+    Iterator &operator++() noexcept {
       ++imp_;
       return *this;
     }
+    Iterator &operator++(int) noexcept {
+      ++imp_;
+      return *this;
+    }
+    Iterator &operator--() noexcept {
+      --imp_;
+      return *this;
+    }
+    Iterator &operator--(int) noexcept {
+      --imp_;
+      return *this;
+    }
 
-    UNodeValue &operator*() { return imp_->second; }
-    bool        operator==(const Iterator &rhs) const {
+    UNodeValue &operator*() noexcept { return imp_->second; }
+    bool        operator==(const Iterator &rhs) const noexcept {
       return this->imp_ == rhs.imp_;
     }
-    bool operator!=(const Iterator &rhs) const {
+    bool operator!=(const Iterator &rhs) const noexcept {
       return this->imp_ != rhs.imp_;
     }
 
@@ -466,6 +562,11 @@ public:
         if constexpr (std::is_convertible<value_type, return_type>::value) {
           return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
               ->value();
+        } else if constexpr (std::is_nothrow_constructible<return_type,
+                                                           value_type>::value) {
+          return return_type{
+              reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+                  ->value()};
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
@@ -480,7 +581,7 @@ public:
     }
 
   private:
-    Iterator(imp_iter_type &&imp)
+    Iterator(imp_iter_type &&imp) noexcept
         : imp_{imp} {}
 
   private:
@@ -492,18 +593,30 @@ public:
     using imp_iter_type = std::map<std::string, UNodeValue>::const_iterator;
 
   public:
-    ConstIterator() = default;
+    ConstIterator() noexcept = default;
 
-    ConstIterator &operator++() {
+    ConstIterator &operator++() noexcept {
       ++imp_;
       return *this;
     }
+    ConstIterator &operator++(int) noexcept {
+      ++imp_;
+      return *this;
+    }
+    ConstIterator &operator--() noexcept {
+      --imp_;
+      return *this;
+    }
+    ConstIterator &operator--(int) noexcept {
+      --imp_;
+      return *this;
+    }
 
-    const UNodeValue &operator*() const { return imp_->second; }
-    bool              operator==(const Iterator &rhs) const {
+    const UNodeValue &operator*() const noexcept { return imp_->second; }
+    bool              operator==(const Iterator &rhs) const noexcept {
       return this->imp_ == rhs.imp_;
     }
-    bool operator!=(const Iterator &rhs) const {
+    bool operator!=(const Iterator &rhs) const noexcept {
       return this->imp_ != rhs.imp_;
     }
 
@@ -524,7 +637,8 @@ public:
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
       if (imp_->second->type() == nodeTypeCode) {
-        return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+        return reinterpret_cast<const NodeValueT<value_type> *>(
+                   imp_->second.get())
             ->value();
       }
 
@@ -544,15 +658,21 @@ public:
 
       if (imp_->second->type() == nodeTypeCode) {
         if constexpr (std::is_convertible<value_type, return_type>::value) {
-          return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+          return reinterpret_cast<const NodeValueT<value_type> *>(
+                     imp_->second.get())
               ->value();
+        } else if constexpr (std::is_nothrow_constructible<return_type,
+                                                           value_type>::value) {
+          return return_type{reinterpret_cast<const NodeValueT<value_type> *>(
+                                 imp_->second.get())
+                                 ->value()};
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
 
-          return converter(
-              reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
-                  ->value());
+          return converter(reinterpret_cast<const NodeValueT<value_type> *>(
+                               imp_->second.get())
+                               ->value());
         }
       }
 
@@ -560,17 +680,17 @@ public:
     }
 
   private:
-    ConstIterator(imp_iter_type &&imp)
+    ConstIterator(imp_iter_type &&imp) noexcept
         : imp_{imp} {}
 
   private:
     imp_iter_type imp_;
   };
 
-  Iterator      begin() { return Iterator{doc_.begin()}; }
-  Iterator      end() { return Iterator{doc_.end()}; }
-  ConstIterator begin() const { return ConstIterator{doc_.begin()}; }
-  ConstIterator end() const { return ConstIterator{doc_.end()}; }
+  Iterator      begin() noexcept { return Iterator{doc_.begin()}; }
+  Iterator      end() noexcept { return Iterator{doc_.end()}; }
+  ConstIterator begin() const noexcept { return ConstIterator{doc_.begin()}; }
+  ConstIterator end() const noexcept { return ConstIterator{doc_.end()}; }
 
 private:
   std::map<std::string, UNodeValue> doc_;
@@ -578,10 +698,10 @@ private:
 
 class Array final {
 public:
-  Array() = default;
-  Array(const void *buf, int length);
-  Array(const Array &) = delete;
-  Array(Array &&)      = default;
+  Array() noexcept = default;
+  Array(const void *buf, int length) noexcept(false);
+  Array(const Array &)     = delete;
+  Array(Array &&) noexcept = default;
 
   bson::NodeType type() const noexcept { return bson::array_node; }
   int            getSerializedSize() const noexcept {
@@ -595,6 +715,8 @@ public:
   int serialize(void *buf, int bufSize) const;
 
   void reserve(int n) noexcept { this->arr_.reserve(n); }
+
+  int size() const { return arr_.size(); }
 
   /**\throw bson::OutOfRange or bson::BadCast
    */
@@ -620,12 +742,10 @@ public:
     return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
   }
 
-  template <
-      class InputType,
-      typename = typename std::enable_if<
-          std::is_same<typename type_traits<InputType>::return_type,
-                       typename type_traits<InputType>::value_type>::value &&
-          !std::is_fundamental<InputType>::value>::type>
+  template <class InputType,
+            typename = typename std::enable_if<std::is_same<
+                typename type_traits<InputType>::return_type,
+                typename type_traits<InputType>::value_type>::value>::type>
   typename type_traits<InputType>::return_type &at(int i) noexcept(false) {
     using value_type           = typename type_traits<InputType>::value_type;
     constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
@@ -662,6 +782,10 @@ public:
 
     if constexpr (std::is_convertible<value_type, return_type>::value) {
       return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
+    } else if constexpr (std::is_nothrow_constructible<return_type,
+                                                       value_type>::value) {
+      return return_type{
+          reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value()};
     } else {
       constexpr return_type (*converter)(const value_type &) =
           type_traits<InputType>::converter;
@@ -671,15 +795,59 @@ public:
     }
   }
 
-  template <class InsertType>
+  template <class InsertType,
+            typename = typename std::enable_if<
+                !std::is_convertible<InsertType, const char *>::value>::type>
   Array &push_back(InsertType &&val) {
-    arr_.push_back(UNodeValueFactory::create(std::move(val)));
+    arr_.emplace_back(UNodeValueFactory::create(std::move(val)));
     return *this;
   }
 
-  template <class InsertType>
+  template <class InsertType,
+            typename = typename std::enable_if<
+                !std::is_convertible<InsertType, const char *>::value>::type>
   Array &push_back(const InsertType &val) {
-    arr_.push_back(UNodeValueFactory::create(val));
+    arr_.emplace_back(UNodeValueFactory::create(val));
+    return *this;
+  }
+
+  /**\brief for c-string
+   */
+  template <class InsertType,
+            typename = typename std::enable_if<
+                std::is_convertible<InsertType, const char *>::value>::type>
+  Array &push_back(InsertType val) {
+    arr_.emplace_back(
+        UNodeValueFactory::create(reinterpret_cast<const char *>(val)));
+    return *this;
+  }
+
+  template <class InputType, class InsertType>
+  Array &push_back(const InsertType &val) noexcept {
+    using value_type  = typename type_traits<InputType>::value_type;
+    using return_type = typename type_traits<InputType>::return_type;
+    constexpr value_type (*back_converter)(const return_type &) =
+        type_traits<InputType>::back_converter;
+
+    if constexpr (std::is_convertible<
+                      InsertType,
+                      typename type_traits<InputType>::return_type>::value) {
+      arr_.emplace_back(UNodeValueFactory::create(back_converter(val)));
+    } else if constexpr (std::is_nothrow_constructible<return_type,
+                                                       InsertType>::value) {
+      arr_.emplace_back(
+
+          UNodeValueFactory::create(back_converter(return_type{val})));
+    } else {
+      static_assert(
+          std::is_nothrow_constructible<return_type, InsertType>::value);
+    }
+
+    return *this;
+  }
+
+  Array &push_back() {
+    arr_.emplace_back(UNodeValueFactory::create());
     return *this;
   }
 
@@ -699,19 +867,34 @@ public:
     using imp_iter_type = std::vector<UNodeValue>::iterator;
 
   public:
-    Iterator() = default;
+    Iterator() noexcept = default;
 
     Iterator &operator++() {
       ++imp_;
       ++num_;
       return *this;
     }
+    Iterator &operator++(int) {
+      ++imp_;
+      ++num_;
+      return *this;
+    }
+    Iterator &operator--() {
+      --imp_;
+      --num_;
+      return *this;
+    }
+    Iterator &operator--(int) {
+      --imp_;
+      --num_;
+      return *this;
+    }
 
-    UNodeValue &operator*() { return *imp_; }
-    bool        operator==(const Iterator &rhs) const {
+    UNodeValue &operator*() noexcept { return *imp_; }
+    bool        operator==(const Iterator &rhs) const noexcept {
       return this->imp_ == rhs.imp_;
     }
-    bool operator!=(const Iterator &rhs) const {
+    bool operator!=(const Iterator &rhs) const noexcept {
       return this->imp_ != rhs.imp_;
     }
 
@@ -754,6 +937,11 @@ public:
         if constexpr (std::is_convertible<value_type, return_type>::value) {
           return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
               ->value();
+        } else if constexpr (std::is_nothrow_constructible<return_type,
+                                                           value_type>::value) {
+          return return_type{
+              reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+                  ->value()};
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
@@ -768,7 +956,7 @@ public:
     }
 
   private:
-    Iterator(imp_iter_type &&imp, size_t num)
+    Iterator(imp_iter_type &&imp, size_t num) noexcept
         : imp_{imp}
         , num_{num} {}
 
@@ -779,26 +967,37 @@ public:
 
   class ConstIterator {
     friend Array;
-    using imp_iter_type = std::vector<UNodeValue>::const_iterator;
+    using imp_iter_type = const UNodeValue *;
 
   public:
-    ConstIterator() = default;
+    ConstIterator() noexcept = default;
 
-    ConstIterator &operator++() {
-      ++imp_;
+    ConstIterator &operator++() noexcept {
       ++num_;
       return *this;
     }
-
-    const UNodeValue &operator*() const { return *imp_; }
-    bool              operator==(const ConstIterator &rhs) const {
-      return this->imp_ == rhs.imp_;
+    ConstIterator &operator++(int) noexcept {
+      ++num_;
+      return *this;
     }
-    bool operator!=(const ConstIterator &rhs) const {
-      return this->imp_ != rhs.imp_;
+    ConstIterator &operator--() noexcept {
+      --num_;
+      return *this;
+    }
+    ConstIterator &operator--(int) noexcept {
+      --num_;
+      return *this;
     }
 
-    bson::NodeType type() const noexcept { return (*imp_)->type(); }
+    const UNodeValue &operator*() const noexcept { return *(imp_ + num_); }
+    bool              operator==(const ConstIterator &rhs) const noexcept {
+      return this->imp_ + this->num_ == rhs.imp_ + rhs.num_;
+    }
+    bool operator!=(const ConstIterator &rhs) const noexcept {
+      return this->imp_ + this->num_ != rhs.imp_ + rhs.num_;
+    }
+
+    bson::NodeType type() const noexcept { return (*(imp_ + num_))->type(); }
     std::string    name() const noexcept { return std::to_string(num_); }
 
     /**\throw bson::BadCast
@@ -814,8 +1013,8 @@ public:
       using value_type           = typename type_traits<InputType>::value_type;
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if ((*imp_)->type() == nodeTypeCode) {
-        return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+      if ((*(imp_ + num_))->type() == nodeTypeCode) {
+        return reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
             ->value();
       }
 
@@ -833,16 +1032,21 @@ public:
       using return_type          = typename type_traits<InputType>::return_type;
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if ((*imp_)->type() == nodeTypeCode) {
+      if ((*(imp_ + num_))->type() == nodeTypeCode) {
         if constexpr (std::is_convertible<value_type, return_type>::value) {
-          return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+          return reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
               ->value();
+        } else if constexpr (std::is_nothrow_constructible<return_type,
+                                                           value_type>::value) {
+          return return_type{
+              reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+                  ->value()};
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
 
           return converter(
-              reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+              reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
                   ->value());
         }
       }
@@ -851,7 +1055,7 @@ public:
     }
 
   private:
-    ConstIterator(imp_iter_type &&imp, size_t num)
+    ConstIterator(imp_iter_type imp, size_t num) noexcept
         : imp_{imp}
         , num_{num} {}
 
@@ -859,10 +1063,12 @@ public:
     imp_iter_type imp_;
     size_t        num_;
   };
-  Iterator      begin() { return Iterator{arr_.begin(), 0}; }
-  Iterator      end() { return Iterator{arr_.end(), arr_.size()}; }
-  ConstIterator begin() const { return ConstIterator{arr_.begin(), 0}; }
-  ConstIterator end() const { return ConstIterator{arr_.end(), arr_.size()}; }
+  Iterator      begin() noexcept { return Iterator{arr_.begin(), 0}; }
+  Iterator      end() noexcept { return Iterator{arr_.end(), arr_.size()}; }
+  ConstIterator begin() const noexcept { return ConstIterator{arr_.data(), 0}; }
+  ConstIterator end() const noexcept {
+    return ConstIterator{arr_.data(), arr_.size()};
+  }
 
 private:
   std::vector<UNodeValue> arr_;
@@ -1030,7 +1236,7 @@ int Array::serialize(void *buf, int length) const {
 namespace std {
 template <>
 struct iterator_traits<minibson::Document::ConstIterator> {
-  using iterator_category = std::forward_iterator_tag;
+  using iterator_category = std::bidirectional_iterator_tag;
   using difference_type   = std::ptrdiff_t;
   using reference         = minibson::UNodeValue &;
   using pointer           = minibson::UNodeValue *;
@@ -1038,7 +1244,7 @@ struct iterator_traits<minibson::Document::ConstIterator> {
 
 template <>
 struct iterator_traits<minibson::Document::Iterator> {
-  using iterator_category = std::forward_iterator_tag;
+  using iterator_category = std::bidirectional_iterator_tag;
   using difference_type   = std::ptrdiff_t;
   using reference         = minibson::UNodeValue &;
   using pointer           = minibson::UNodeValue *;
@@ -1046,7 +1252,7 @@ struct iterator_traits<minibson::Document::Iterator> {
 
 template <>
 struct iterator_traits<minibson::Array::ConstIterator> {
-  using iterator_category = std::forward_iterator_tag;
+  using iterator_category = std::bidirectional_iterator_tag;
   using difference_type   = std::ptrdiff_t;
   using reference         = minibson::UNodeValue &;
   using pointer           = minibson::UNodeValue *;
@@ -1054,7 +1260,7 @@ struct iterator_traits<minibson::Array::ConstIterator> {
 
 template <>
 struct iterator_traits<minibson::Array::Iterator> {
-  using iterator_category = std::forward_iterator_tag;
+  using iterator_category = std::bidirectional_iterator_tag;
   using difference_type   = std::ptrdiff_t;
   using reference         = minibson::UNodeValue &;
   using pointer           = minibson::UNodeValue *;
