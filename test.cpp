@@ -130,6 +130,12 @@ void minibson_test() {
   assert(d.contains<std::string_view>("string_view"));
   assert(d.contains<std::string_view>("cstring"));
 
+  assert(d.contains<String>("binary"));
+
+  assert(d.contains<bson::Scalar>("int32"));
+  assert(d.contains<bson::Scalar>("int64"));
+  assert(d.contains<bson::Scalar>("float"));
+
   assert(d.get<int32_t>("int32") == 1);
   assert(d.get<int64_t>("int64") == 140737488355328LL);
   assert(d.get<double>("float") == 30.20);
@@ -280,6 +286,12 @@ void microbson_test() {
   assert(doc.contains<microbson::Array>("array"));
   assert(doc.contains<microbson::Binary>("binary"));
   assert(doc.contains<int>("not exists") == false);
+
+  assert(doc.contains<String>("binary"));
+
+  assert(doc.contains<bson::Scalar>("int32"));
+  assert(doc.contains<bson::Scalar>("int64"));
+  assert(doc.contains<bson::Scalar>("float"));
 
   assert(doc.get<int32_t>("int32") == 1);
   assert(doc.get<int64_t>("int64") == 140737488355328LL);

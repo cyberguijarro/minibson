@@ -232,7 +232,7 @@ public:
     std::string_view key() const noexcept { return Node{offset_}.key(); }
 
     template <class InputType>
-    typename type_traits<InputType>::return_type value() const {
+    typename type_traits<InputType>::return_type value() const noexcept(false) {
       return Node{offset_}.value<InputType>();
     }
 
@@ -527,5 +527,31 @@ Node::value<bson::Scalar>() const noexcept(false) {
   default:
     throw bson::BadCast{};
   }
+}
+
+template <>
+inline bool Document::contains<bson::Scalar>(std::string_view key) const
+    noexcept {
+  if (auto found = std::find_if(
+          this->begin(),
+          this->end(),
+          [key](Node node) {
+            if (node.key() ==
+                key) { // we not need check here, because in bson can not
+                       // contains two or more values with same key
+              return true;
+            }
+
+            return false;
+          });
+      found != this->end()) {
+    if (auto type = (*found).type(); type == bson::double_node ||
+                                     type == bson::int32_node ||
+                                     type == bson::int64_node) {
+      return true;
+    }
+  }
+
+  return false;
 }
 } // namespace microbson
