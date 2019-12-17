@@ -1339,7 +1339,8 @@ Array::at<bson::Scalar>(int i) const noexcept(false) {
 }
 
 template <>
-bool Document::contains<bson::Scalar>(const std::string &key) const noexcept {
+inline bool Document::contains<bson::Scalar>(const std::string &key) const
+    noexcept {
   if (auto found = doc_.find(key); found != doc_.end()) {
     if (auto type = found->second->type(); type == bson::double_node ||
                                            type == bson::int32_node ||
