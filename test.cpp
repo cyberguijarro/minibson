@@ -139,6 +139,17 @@ void minibson_test() {
   assert(d.get<std::string_view>("cstring") == "text");
   assert(std::strcmp(d.get<const char *>("string"), "text") == 0);
 
+  static_assert(
+      std::is_same<decltype(d.get<bson::Scalar>("int32")), double>::value);
+  static_assert(
+      std::is_same<decltype(d.get<bson::Scalar>("int64")), double>::value);
+  static_assert(
+      std::is_same<decltype(d.get<bson::Scalar>("float")), double>::value);
+
+  assert(d.get<bson::Scalar>("int32") == 1);
+  assert(d.get<bson::Scalar>("int64") == 140737488355328LL);
+  assert(d.get<bson::Scalar>("float") == 30.20);
+
   assert(d.get<String>("binary") == SOME_BUF_STR);
 
   minibson::Array arr;
@@ -179,6 +190,14 @@ void minibson_test() {
   assert(std::is_void<decltype(arr.at<void>(7))>::value);
   assert(arr.at<String>(8) == SOME_BUF_STR);
   assert(arr.at<String>(9) == "custom");
+
+  static_assert(std::is_same<decltype(arr.at<bson::Scalar>(0)), double>::value);
+  static_assert(std::is_same<decltype(arr.at<bson::Scalar>(1)), double>::value);
+  static_assert(std::is_same<decltype(arr.at<bson::Scalar>(2)), double>::value);
+
+  assert(arr.at<bson::Scalar>(0) == 10);
+  assert(arr.at<bson::Scalar>(1) == 10);
+  assert(arr.at<bson::Scalar>(2) == 10.);
 
   const auto &arrConst = arr;
 
@@ -221,8 +240,11 @@ void microbson_test() {
   d.set("some_other_string", "some_other_text");
   d.set("null");
   d.set("array",
-        minibson::Array{}.push_back(0).push_back(1).push_back(
-            std::string{"string"}));
+        minibson::Array{}
+            .push_back(0)
+            .push_back<double>(1)
+            .push_back<int64_t>(2)
+            .push_back(std::string{"string"}));
 
   // serialize
   int   length = d.getSerializedSize();
@@ -270,18 +292,38 @@ void microbson_test() {
   CHECK_EXCEPT(doc.get<int>("not exists"), bson::OutOfRange);
   CHECK_EXCEPT(doc.get<int>("string"), bson::BadCast);
 
+  static_assert(
+      std::is_same<decltype(doc.get<bson::Scalar>("int32")), double>::value);
+  static_assert(
+      std::is_same<decltype(doc.get<bson::Scalar>("int64")), double>::value);
+  static_assert(
+      std::is_same<decltype(doc.get<bson::Scalar>("float")), double>::value);
+
+  assert(doc.get<bson::Scalar>("int32") == 1);
+  assert(doc.get<bson::Scalar>("int64") == 140737488355328LL);
+  assert(doc.get<bson::Scalar>("float") == 30.20);
+
   microbson::Document nestedDoc = doc.get<microbson::Document>("document");
   assert(nestedDoc.size() == 2);
   assert(nestedDoc.get<int32_t>("a") == 3);
   assert(nestedDoc.get<int32_t>("b") == 4);
 
   microbson::Array a = doc.get<microbson::Array>("array");
-  assert(a.size() == 3);
+  assert(a.size() == 4);
   assert(a.at<int32_t>(0) == 0);
-  assert(a.at<int32_t>(1) == 1);
-  assert(a.at<std::string_view>(2) == "string");
-  CHECK_EXCEPT(a.at<int>(2), bson::BadCast);
-  CHECK_EXCEPT(a.at<int>(3), bson::OutOfRange);
+  assert(a.at<double>(1) == 1);
+  assert(a.at<int64_t>(2) == 2);
+  assert(a.at<std::string_view>(3) == "string");
+  CHECK_EXCEPT(a.at<int>(3), bson::BadCast);
+  CHECK_EXCEPT(a.at<int>(4), bson::OutOfRange);
+
+  static_assert(std::is_same<decltype(a.at<bson::Scalar>(0)), double>::value);
+  static_assert(std::is_same<decltype(a.at<bson::Scalar>(1)), double>::value);
+  static_assert(std::is_same<decltype(a.at<bson::Scalar>(2)), double>::value);
+
+  assert(a.at<bson::Scalar>(0) == 0);
+  assert(a.at<bson::Scalar>(1) == 1);
+  assert(a.at<bson::Scalar>(2) == 2);
 
   microbson::Binary binary = doc.get<microbson::Binary>("binary");
   assert(binary.first != nullptr);

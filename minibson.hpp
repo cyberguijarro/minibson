@@ -120,6 +120,14 @@ struct type_traits<Binary> {
   using return_type = Binary;
 };
 
+/**\brief Special Case for get some scalar value as double
+ */
+template <>
+struct type_traits<bson::Scalar> {
+  using value_type  = bson::Scalar;
+  using return_type = double;
+};
+
 class NodeValue {
 public:
   virtual ~NodeValue() = default;
@@ -163,14 +171,14 @@ public:
         std::is_same<T, int32_t>::value || std::is_same<T, int64_t>::value);
   }
 
-  bson::NodeType type() const noexcept override {
+  inline bson::NodeType type() const noexcept override {
     return static_cast<bson::NodeType>(type_traits<T>::node_type_code);
   }
 
   const value_type &value() const noexcept { return val_; }
   value_type &      value() noexcept { return val_; }
 
-  int getSerializedSize() const noexcept {
+  int getSerializedSize() const noexcept override {
     if constexpr (std::is_same<value_type, std::string>::value) {
       return 4 /*size*/ + val_.size() + 1 /*\0*/;
     } else if constexpr (std::is_same<value_type, Array>::value ||
@@ -229,34 +237,39 @@ class UNodeValueFactory {
 public:
   template <class InputType>
   static UNodeValue create(InputType &&val) noexcept {
-    using value_type = typename type_traits<InputType>::value_type;
+    using value_type  = typename type_traits<InputType>::value_type;
+    using return_type = typename type_traits<InputType>::return_type;
 
     if constexpr (std::is_same<InputType, value_type>::value) {
       return std::make_unique<NodeValueT<value_type>>(std::move(val));
-    } else if constexpr (std::is_convertible<InputType,
-                                             const value_type &>::value) {
+    } else if constexpr (std::is_convertible<InputType, value_type>::value) {
       return std::make_unique<NodeValueT<value_type>>(val);
     } else if constexpr (std::is_nothrow_constructible<InputType,
                                                        value_type>::value) {
-      return std::make_unique<NodeValueT<value_type>>(value_type{val});
+      return std::make_unique<NodeValueT<value_type>>(value_type(val));
     } else {
-      static_assert(
-          std::is_nothrow_constructible<InputType, value_type>::value);
+      constexpr value_type (*back_converter)(const return_type &) =
+          type_traits<InputType>::back_converter;
+
+      return std::make_unique<NodeValueT<value_type>>(back_converter(val));
     }
   }
 
   template <class InputType>
   static UNodeValue create(const InputType &val) noexcept {
-    using value_type = typename type_traits<InputType>::value_type;
+    using value_type  = typename type_traits<InputType>::value_type;
+    using return_type = typename type_traits<InputType>::return_type;
 
-    if constexpr (std::is_convertible<InputType, const value_type &>::value) {
+    if constexpr (std::is_convertible<InputType, value_type>::value) {
       return std::make_unique<NodeValueT<value_type>>(val);
     } else if constexpr (std::is_nothrow_constructible<InputType,
                                                        value_type>::value) {
-      return std::make_unique<NodeValueT<value_type>>(value_type{val});
+      return std::make_unique<NodeValueT<value_type>>(value_type(val));
     } else {
-      static_assert(
-          std::is_nothrow_constructible<InputType, value_type>::value);
+      constexpr value_type (*back_converter)(const return_type &) =
+          type_traits<InputType>::back_converter;
+
+      return std::make_unique<NodeValueT<value_type>>(back_converter(val));
     }
   }
 
@@ -273,11 +286,16 @@ public:
   Binary(std::vector<byte> &&buf) noexcept
       : buf_(std::move(buf)) {}
 
+  Binary(microbson::Binary b) noexcept {
+    this->buf_.resize(b.second);
+    std::memcpy(this->buf_.data(), b.first, b.second);
+  }
+
   Binary(const Binary &)     = delete;
   Binary(Binary &&) noexcept = default;
 
-  bson::NodeType type() const noexcept { return bson::binary_node; }
-  int            getSerializedSize() const noexcept {
+  constexpr bson::NodeType type() const noexcept { return bson::binary_node; }
+  inline int               getSerializedSize() const noexcept {
     return 4 /*size*/ + 1 /*subtype*/ + buf_.size();
   }
   int serialize(void *buf, int bufSize) const {
@@ -306,22 +324,34 @@ public:
    * \param length size of buffer, need for validate the document
    * \throw bson::InvalidArgument if can not deserialize bson
    */
-  Document(const void *buffer, int length) noexcept(false);
-  Document(const Document &)     = delete;
-  Document(Document &&) noexcept = default;
+  Document(const void *buffer, int length) {
+    microbson::Document doc{buffer, length};
+    this->deserialize(doc);
+  }
+  Document(microbson::Document doc) { this->deserialize(doc); }
 
-  bson::NodeType type() const noexcept { return bson::document_node; }
-  int            getSerializedSize() const noexcept {
+  Document(const Document &)        = delete;
+  Document(Document &&rhs) noexcept = default;
+  Document &operator=(Document &&) noexcept = default;
+
+  constexpr bson::NodeType type() const noexcept { return bson::document_node; }
+  int                      getSerializedSize() const noexcept {
     int count = 4 /*size*/;
-    for (auto &[name, val] : doc_) {
-      count += 1 /*type*/ + name.size() + 1 /*\0*/ + val->getSerializedSize();
+    for (auto &[key, val] : doc_) {
+      count += 1 /*type*/ + key.size() + 1 /*\0*/ + val->getSerializedSize();
     }
     return count + 1 /*\0*/;
   }
 
   /**\throw bson::InvalidArgument if memory not enough
+   * \brief serialize in existing buffer
    */
   int serialize(void *buf, int bufSize) const noexcept(false);
+
+  /**\brief create new buffer, serialize in it, and return it
+   * \return new buffer with serialized bson document
+   */
+  std::vector<byte> serialize() const noexcept(false);
 
   /**\throw bson::OutOfRange if not have the value, or bson::BadCast if have not
    * same type
@@ -448,22 +478,17 @@ public:
   Document &set(std::string key, const InsertType &val) noexcept {
     using value_type  = typename type_traits<InputType>::value_type;
     using return_type = typename type_traits<InputType>::return_type;
-    constexpr value_type (*back_converter)(const return_type &) =
-        type_traits<InputType>::back_converter;
 
-    if constexpr (std::is_convertible<
-                      InsertType,
-                      typename type_traits<InputType>::return_type>::value) {
+    if constexpr (std::is_nothrow_constructible<value_type,
+                                                InsertType>::value) {
+      doc_.insert_or_assign(std::move(key),
+                            UNodeValueFactory::create(value_type(val)));
+    } else {
+      constexpr value_type (*back_converter)(const return_type &) =
+          type_traits<InputType>::back_converter;
+
       doc_.insert_or_assign(std::move(key),
                             UNodeValueFactory::create(back_converter(val)));
-    } else if constexpr (std::is_nothrow_constructible<return_type,
-                                                       InsertType>::value) {
-      doc_.insert_or_assign(
-          std::move(key),
-          UNodeValueFactory::create(back_converter(return_type{val})));
-    } else {
-      static_assert(
-          std::is_nothrow_constructible<return_type, InsertType>::value);
     }
 
     return *this;
@@ -523,8 +548,8 @@ public:
       return this->imp_ != rhs.imp_;
     }
 
-    bson::NodeType     type() const noexcept { return imp_->second->type(); }
-    const std::string &name() const noexcept { return imp_->first; }
+    inline bson::NodeType type() const noexcept { return imp_->second->type(); }
+    inline const std::string &key() const noexcept { return imp_->first; }
 
     /**\throw bson::BadCast
      */
@@ -540,7 +565,8 @@ public:
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
       if (imp_->second->type() == nodeTypeCode) {
-        return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+        return reinterpret_cast<const NodeValueT<value_type> *>(
+                   imp_->second.get())
             ->value();
       }
 
@@ -560,20 +586,21 @@ public:
 
       if (imp_->second->type() == nodeTypeCode) {
         if constexpr (std::is_convertible<value_type, return_type>::value) {
-          return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
+          return reinterpret_cast<const NodeValueT<value_type> *>(
+                     imp_->second.get())
               ->value();
         } else if constexpr (std::is_nothrow_constructible<return_type,
                                                            value_type>::value) {
-          return return_type{
-              reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
-                  ->value()};
+          return return_type(reinterpret_cast<const NodeValueT<value_type> *>(
+                                 imp_->second.get())
+                                 ->value());
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
 
-          return converter(
-              reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
-                  ->value());
+          return converter(reinterpret_cast<const NodeValueT<value_type> *>(
+                               imp_->second.get())
+                               ->value());
         }
       }
 
@@ -620,8 +647,8 @@ public:
       return this->imp_ != rhs.imp_;
     }
 
-    bson::NodeType     type() const noexcept { return imp_->second->type(); }
-    const std::string &name() const noexcept { return imp_->first; }
+    inline bson::NodeType type() const noexcept { return imp_->second->type(); }
+    inline const std::string &key() const noexcept { return imp_->first; }
 
     /**\throw bson::BadCast
      */
@@ -663,9 +690,9 @@ public:
               ->value();
         } else if constexpr (std::is_nothrow_constructible<return_type,
                                                            value_type>::value) {
-          return return_type{reinterpret_cast<const NodeValueT<value_type> *>(
+          return return_type(reinterpret_cast<const NodeValueT<value_type> *>(
                                  imp_->second.get())
-                                 ->value()};
+                                 ->value());
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
@@ -693,18 +720,27 @@ public:
   ConstIterator end() const noexcept { return ConstIterator{doc_.end()}; }
 
 private:
+  void deserialize(microbson::Document doc);
+
+private:
   std::map<std::string, UNodeValue> doc_;
 };
 
 class Array final {
 public:
   Array() noexcept = default;
-  Array(const void *buf, int length) noexcept(false);
+  Array(const void *buffer, int length) {
+    microbson::Document doc{buffer, length};
+    this->deserialize(doc);
+  }
+  Array(microbson::Array doc) { this->deserialize(doc); }
+
   Array(const Array &)     = delete;
   Array(Array &&) noexcept = default;
+  Array &operator=(Array &&) noexcept = default;
 
-  bson::NodeType type() const noexcept { return bson::array_node; }
-  int            getSerializedSize() const noexcept {
+  constexpr bson::NodeType type() const noexcept { return bson::array_node; }
+  int                      getSerializedSize() const noexcept {
     int count = 4 /*size*/;
     for (size_t i = 0; i < arr_.size(); ++i) {
       count += 1 /*type*/ + std::to_string(i).size() + 1 /*\0*/ +
@@ -712,7 +748,16 @@ public:
     }
     return count + 1 /*\0*/;
   }
-  int serialize(void *buf, int bufSize) const;
+
+  /**\brief serialize in existing buffer
+   * \return capacity of serialized bytes
+   */
+  int serialize(void *buf, int bufSize) const noexcept(false);
+
+  /**\brief create new buffer, serialize in it, and return it
+   * \return new buffer with serialized bson array
+   */
+  std::vector<byte> serialize() const noexcept(false);
 
   void reserve(int n) noexcept { this->arr_.reserve(n); }
 
@@ -739,7 +784,8 @@ public:
       throw bson::BadCast{};
     }
 
-    return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
+    return reinterpret_cast<const NodeValueT<value_type> *>(arr_[i].get())
+        ->value();
   }
 
   template <class InputType,
@@ -781,17 +827,20 @@ public:
     }
 
     if constexpr (std::is_convertible<value_type, return_type>::value) {
-      return reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value();
+      return reinterpret_cast<const NodeValueT<value_type> *>(arr_[i].get())
+          ->value();
     } else if constexpr (std::is_nothrow_constructible<return_type,
                                                        value_type>::value) {
-      return return_type{
-          reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value()};
+      return return_type(
+          reinterpret_cast<const NodeValueT<value_type> *>(arr_[i].get())
+              ->value());
     } else {
       constexpr return_type (*converter)(const value_type &) =
           type_traits<InputType>::converter;
 
       return converter(
-          reinterpret_cast<NodeValueT<value_type> *>(arr_[i].get())->value());
+          reinterpret_cast<const NodeValueT<value_type> *>(arr_[i].get())
+              ->value());
     }
   }
 
@@ -826,21 +875,15 @@ public:
   Array &push_back(const InsertType &val) noexcept {
     using value_type  = typename type_traits<InputType>::value_type;
     using return_type = typename type_traits<InputType>::return_type;
-    constexpr value_type (*back_converter)(const return_type &) =
-        type_traits<InputType>::back_converter;
 
-    if constexpr (std::is_convertible<
-                      InsertType,
-                      typename type_traits<InputType>::return_type>::value) {
-      arr_.emplace_back(UNodeValueFactory::create(back_converter(val)));
-    } else if constexpr (std::is_nothrow_constructible<return_type,
-                                                       InsertType>::value) {
-      arr_.emplace_back(
-
-          UNodeValueFactory::create(back_converter(return_type{val})));
+    if constexpr (std::is_nothrow_constructible<value_type,
+                                                InsertType>::value) {
+      arr_.emplace_back(UNodeValueFactory::create(value_type(val)));
     } else {
-      static_assert(
-          std::is_nothrow_constructible<return_type, InsertType>::value);
+      constexpr value_type (*back_converter)(const return_type &) =
+          type_traits<InputType>::back_converter;
+
+      arr_.emplace_back(UNodeValueFactory::create(back_converter(val)));
     }
 
     return *this;
@@ -898,8 +941,8 @@ public:
       return this->imp_ != rhs.imp_;
     }
 
-    bson::NodeType type() const noexcept { return (*imp_)->type(); }
-    std::string    name() const noexcept { return std::to_string(num_); }
+    inline bson::NodeType type() const noexcept { return (*imp_)->type(); }
+    inline std::string    key() const noexcept { return std::to_string(num_); }
 
     /**\throw bson::BadCast
      */
@@ -915,7 +958,7 @@ public:
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
       if ((*imp_)->type() == nodeTypeCode) {
-        return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+        return reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
             ->value();
       }
 
@@ -935,19 +978,19 @@ public:
 
       if ((*imp_)->type() == nodeTypeCode) {
         if constexpr (std::is_convertible<value_type, return_type>::value) {
-          return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+          return reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
               ->value();
         } else if constexpr (std::is_nothrow_constructible<return_type,
                                                            value_type>::value) {
-          return return_type{
-              reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
-                  ->value()};
+          return return_type(
+              reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+                  ->value());
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
 
           return converter(
-              reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+              reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
                   ->value());
         }
       }
@@ -997,8 +1040,10 @@ public:
       return this->imp_ + this->num_ != rhs.imp_ + rhs.num_;
     }
 
-    bson::NodeType type() const noexcept { return (*(imp_ + num_))->type(); }
-    std::string    name() const noexcept { return std::to_string(num_); }
+    inline bson::NodeType type() const noexcept {
+      return (*(imp_ + num_))->type();
+    }
+    inline std::string key() const noexcept { return std::to_string(num_); }
 
     /**\throw bson::BadCast
      */
@@ -1038,9 +1083,9 @@ public:
               ->value();
         } else if constexpr (std::is_nothrow_constructible<return_type,
                                                            value_type>::value) {
-          return return_type{
+          return return_type(
               reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
-                  ->value()};
+                  ->value());
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
@@ -1071,60 +1116,61 @@ public:
   }
 
 private:
+  void deserialize(microbson::Document doc) noexcept(false);
+
+private:
   std::vector<UNodeValue> arr_;
 };
 
-Document::Document(const void *buffer, int length) {
-  microbson::Document doc{buffer, length};
+inline void Document::deserialize(microbson::Document doc) {
   for (auto i = doc.begin(); i != doc.end(); ++i) {
     microbson::Node node = *i;
     switch (node.type()) {
     case bson::string_node:
-      doc_.emplace(node.name(),
+      doc_.emplace(node.key(),
                    UNodeValueFactory::create(node.value<std::string_view>()));
       break;
     case bson::boolean_node:
-      doc_.emplace(node.name(), UNodeValueFactory::create(node.value<bool>()));
+      doc_.emplace(node.key(), UNodeValueFactory::create(node.value<bool>()));
       break;
     case bson::int32_node:
-      doc_.emplace(node.name(),
+      doc_.emplace(node.key(),
                    UNodeValueFactory::create(node.value<int32_t>()));
       break;
     case bson::int64_node:
-      doc_.emplace(node.name(),
+      doc_.emplace(node.key(),
                    UNodeValueFactory::create(node.value<int64_t>()));
       break;
     case bson::double_node:
-      doc_.emplace(node.name(),
-                   UNodeValueFactory::create(node.value<double>()));
+      doc_.emplace(node.key(), UNodeValueFactory::create(node.value<double>()));
       break;
     case bson::null_node:
-      doc_.emplace(node.name(), UNodeValueFactory::create());
+      doc_.emplace(node.key(), UNodeValueFactory::create());
       break;
     case bson::array_node:
       doc_.emplace(
-          node.name(),
-          UNodeValueFactory::create(Array{node.data(), node.length()}));
+          node.key(),
+          UNodeValueFactory::create(Array{node.value<microbson::Array>()}));
       break;
     case bson::document_node:
-      doc_.emplace(
-          node.name(),
-          UNodeValueFactory::create(Document{node.data(), node.length()}));
+      doc_.emplace(node.key(),
+                   UNodeValueFactory::create(
+                       Document{node.value<microbson::Document>()}));
       break;
     case bson::binary_node:
       doc_.emplace(
-          node.name(),
-          UNodeValueFactory::create(Binary{node.data(), node.length()}));
+          node.key(),
+          UNodeValueFactory::create(Binary{node.value<microbson::Binary>()}));
       break;
     case bson::unknown_node:
       throw bson::InvalidArgument{"unknown node by key: " +
-                                  std::string{node.name()}};
+                                  std::string{node.key()}};
       break;
     }
   }
 }
 
-int Document::serialize(void *buf, int length) const {
+inline int Document::serialize(void *buf, int length) const {
   int size = this->getSerializedSize();
 
   if (length < size) {
@@ -1134,12 +1180,12 @@ int Document::serialize(void *buf, int length) const {
   *reinterpret_cast<int *>(buf) = size;
   char *ptr                     = reinterpret_cast<char *>(buf);
   int   offset                  = 4 /*size*/;
-  for (auto &[name, val] : doc_) {
-    // serialize type and name
+  for (auto &[key, val] : doc_) {
+    // serialize type and key
     *(ptr + offset) = val->type();
     ++offset;
-    std::strcpy(ptr + offset, name.c_str());
-    offset += name.size() + 1;
+    std::strcpy(ptr + offset, key.c_str());
+    offset += key.size() + 1;
 
     offset += val->serialize(ptr + offset, length - offset - 1 /*\0*/);
   }
@@ -1154,8 +1200,14 @@ int Document::serialize(void *buf, int length) const {
   return offset;
 }
 
-Array::Array(const void *buffer, int length) {
-  microbson::Document doc{buffer, length};
+inline std::vector<byte> Document::serialize() const {
+  int               size = this->getSerializedSize();
+  std::vector<byte> retval(size);
+  this->serialize(retval.data(), size);
+  return retval;
+}
+
+inline void Array::deserialize(microbson::Document doc) {
   arr_.reserve(doc.size());
   for (auto i = doc.begin(); i != doc.end(); ++i) {
     microbson::Node node = *i;
@@ -1181,25 +1233,25 @@ Array::Array(const void *buffer, int length) {
       break;
     case bson::array_node:
       arr_.emplace_back(
-          UNodeValueFactory::create(Array{node.data(), node.length()}));
+          UNodeValueFactory::create(Array{node.value<microbson::Array>()}));
       break;
     case bson::document_node:
-      arr_.emplace_back(
-          UNodeValueFactory::create(Document{node.data(), node.length()}));
+      arr_.emplace_back(UNodeValueFactory::create(
+          Document{node.value<microbson::Document>()}));
       break;
     case bson::binary_node:
       arr_.emplace_back(
-          UNodeValueFactory::create(Binary{node.data(), node.length()}));
+          UNodeValueFactory::create(Binary{node.value<microbson::Binary>()}));
       break;
     case bson::unknown_node:
       throw bson::InvalidArgument{"unknown node by index: " +
-                                  std::string{node.name()}};
+                                  std::string{node.key()}};
       break;
     }
   }
 }
 
-int Array::serialize(void *buf, int length) const {
+inline int Array::serialize(void *buf, int length) const {
   int size = this->getSerializedSize();
 
   if (length < size) {
@@ -1210,14 +1262,14 @@ int Array::serialize(void *buf, int length) const {
   char *ptr                     = reinterpret_cast<char *>(buf);
   int   offset                  = 4 /*size*/;
   for (size_t i = 0; i < arr_.size(); ++i) {
-    std::string       name = std::to_string(i);
-    const UNodeValue &val  = arr_[i];
+    std::string       key = std::to_string(i);
+    const UNodeValue &val = arr_[i];
 
-    // serialize type and name
+    // serialize type and key
     *(ptr + offset) = val->type();
     ++offset;
-    std::strcpy(ptr + offset, name.c_str());
-    offset += name.size() + 1;
+    std::strcpy(ptr + offset, key.c_str());
+    offset += key.size() + 1;
 
     offset += val->serialize(ptr + offset, length - offset - 1 /*\0*/);
   }
@@ -1230,6 +1282,60 @@ int Array::serialize(void *buf, int length) const {
   }
 
   return offset;
+}
+
+inline std::vector<byte> Array::serialize() const {
+  int               size = this->getSerializedSize();
+  std::vector<byte> retval(size);
+
+  this->serialize(retval.data(), size);
+
+  return retval;
+}
+
+/**\brief special case if we need get some number and we don't care about type
+ * of it
+ */
+template <>
+inline typename type_traits<bson::Scalar>::return_type
+Document::get<bson::Scalar>(const std::string &key) const noexcept(false) {
+  if (auto found = doc_.find(key); found != doc_.end()) {
+    const NodeValue *node = found->second.get();
+    switch (node->type()) {
+    case bson::double_node:
+      return reinterpret_cast<const NodeValueT<double> *>(node)->value();
+    case bson::int32_node:
+      return reinterpret_cast<const NodeValueT<int32_t> *>(node)->value();
+    case bson::int64_node:
+      return reinterpret_cast<const NodeValueT<int64_t> *>(node)->value();
+    default:
+      throw bson::BadCast{};
+    }
+  } else {
+    throw bson::OutOfRange{"have not value by key: " + key};
+  }
+}
+/**\brief special case if we need get some number and we don't care about type
+ * of it
+ */
+template <>
+inline typename type_traits<bson::Scalar>::return_type
+Array::at<bson::Scalar>(int i) const noexcept(false) {
+  if (size_t(i) >= arr_.size()) {
+    throw bson::OutOfRange{"have not value by index: " + std::to_string(i)};
+  }
+
+  const NodeValue *node = arr_[i].get();
+  switch (node->type()) {
+  case bson::double_node:
+    return reinterpret_cast<const NodeValueT<double> *>(node)->value();
+  case bson::int32_node:
+    return reinterpret_cast<const NodeValueT<int32_t> *>(node)->value();
+  case bson::int64_node:
+    return reinterpret_cast<const NodeValueT<int64_t> *>(node)->value();
+  default:
+    throw bson::BadCast{};
+  }
 }
 } // namespace minibson
 

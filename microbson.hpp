@@ -10,19 +10,41 @@
 #include <string_view>
 
 namespace bson {
-class BadCast : public std::bad_cast {
+class Exception {
+public:
+  virtual ~Exception()                      = default;
+  virtual const char *what() const noexcept = 0;
+};
+
+class BadCast final
+    : virtual public Exception
+    , virtual public std::bad_cast {
 public:
   using std::bad_cast::bad_cast;
+
+  const char *what() const noexcept override { return std::bad_cast::what(); }
 };
 
-class InvalidArgument : public std::invalid_argument {
+class InvalidArgument final
+    : virtual public Exception
+    , virtual public std::invalid_argument {
 public:
   using std::invalid_argument::invalid_argument;
+
+  const char *what() const noexcept override {
+    return std::invalid_argument::what();
+  }
 };
 
-class OutOfRange : public std::out_of_range {
+class OutOfRange final
+    : virtual public Exception
+    , virtual public std::out_of_range {
 public:
   using std::out_of_range::out_of_range;
+
+  const char *what() const noexcept override {
+    return std::out_of_range::what();
+  }
 };
 
 enum NodeType {
@@ -37,6 +59,8 @@ enum NodeType {
   int64_node    = 0x12,
   unknown_node  = 0xFF
 };
+
+enum Scalar {}; // special value for scalars
 
 // needed for prevent warning about enum compare
 constexpr bool operator==(NodeType lhs, int rhs) {
@@ -64,11 +88,11 @@ public:
   explicit Node(const byte *data)
       : data_{data} {}
 
-  bson::NodeType type() const noexcept {
+  constexpr bson::NodeType type() const noexcept {
     return static_cast<bson::NodeType>(*data_);
   }
 
-  std::string_view name() const noexcept {
+  inline std::string_view key() const noexcept {
     return std::string_view{reinterpret_cast<const char *>(data_) + 1};
   }
 
@@ -76,7 +100,7 @@ public:
    * 0
    */
   int length() const noexcept {
-    int result = 1 /*type*/ + this->name().size() + 1 /*\0*/;
+    int result = 1 /*type*/ + this->key().size() + 1 /*\0*/;
 
     switch (this->type()) {
     case bson::double_node:
@@ -116,14 +140,16 @@ public:
    */
   template <class InputType>
   typename type_traits<InputType>::return_type value() const noexcept(false) {
-    constexpr typename type_traits<InputType>::return_type (*converter)(
-        const void *) = type_traits<InputType>::converter;
+    using return_type = typename type_traits<InputType>::return_type;
+
+    constexpr return_type (*converter)(const void *) =
+        type_traits<InputType>::converter;
 
     if (this->type() != type_traits<InputType>::node_type_code) {
       throw bson::BadCast{};
     }
 
-    const byte *offset = data_ + 1 /*type*/ + this->name().size() + 1 /*\0*/;
+    const byte *offset = data_ + 1 /*type*/ + this->key().size() + 1 /*\0*/;
 
     return converter(offset);
   }
@@ -147,22 +173,26 @@ public:
   Document(const void *data, int length)
       : data_{reinterpret_cast<const byte *>(data)} {
     if (data_ && !this->valid(length)) {
-      throw bson::InvalidArgument{"invalid bson"};
+      throw bson::InvalidArgument{
+          "invalid bson; input length: " + std::to_string(length) +
+          ", serialized length: " + std::to_string(this->length())};
     }
   }
+
+  inline const void *data() const { return data_; }
 
   /**\brief valid bson document have to have size >= 7, encode own size in
    * first four bytes and last symbol have to be \0
    */
-  bool valid(int length) const noexcept {
+  inline bool valid(int length) const noexcept {
     return length >= 7 && this->length() == length && data_[length - 1] == '\0';
   }
 
-  bool empty() const noexcept { return !data_; }
+  inline bool empty() const noexcept { return !data_; }
 
   /**\return binary length of the document
    */
-  int length() const noexcept {
+  inline int length() const noexcept {
     if (data_) {
       return *reinterpret_cast<const int *>(data_);
     } else {
@@ -199,7 +229,7 @@ public:
     Node operator*() noexcept { return Node{offset_}; }
 
     bson::NodeType   type() const noexcept { return Node{offset_}.type(); }
-    std::string_view name() const noexcept { return Node{offset_}.name(); }
+    std::string_view key() const noexcept { return Node{offset_}.key(); }
 
     template <class InputType>
     typename type_traits<InputType>::return_type value() const {
@@ -385,6 +415,14 @@ struct type_traits<Binary> {
                   *reinterpret_cast<const int *>(ptr)};
   }
 };
+
+/**\brief Special Case for get some scalar (int32, int64 or double) as double
+ */
+template <>
+struct type_traits<bson::Scalar> {
+  using value_type  = bson::Scalar;
+  using return_type = double;
+};
 } // namespace microbson
 
 namespace std {
@@ -401,12 +439,12 @@ inline int Document::size() const noexcept {
 }
 
 template <class InputType>
-bool Document::contains(std::string_view key) const noexcept {
+inline bool Document::contains(std::string_view key) const noexcept {
   if (auto found = std::find_if(
           this->begin(),
           this->end(),
           [key](Node node) {
-            if (node.name() ==
+            if (node.key() ==
                 key) { // we not need check here, because in bson can not
                        // contains two or more values with same key
               return true;
@@ -423,11 +461,11 @@ bool Document::contains(std::string_view key) const noexcept {
   return false;
 }
 
-bool Document::contains(std::string_view key) const noexcept {
+inline bool Document::contains(std::string_view key) const noexcept {
   if (auto found = std::find_if(this->begin(),
                                 this->end(),
                                 [key](Node node) {
-                                  if (node.name() == key) {
+                                  if (node.key() == key) {
                                     return true;
                                   }
 
@@ -441,12 +479,12 @@ bool Document::contains(std::string_view key) const noexcept {
 }
 
 template <class InputType>
-typename type_traits<InputType>::return_type
+inline typename type_traits<InputType>::return_type
 Document::get(std::string_view key) const {
   if (auto found = std::find_if(this->begin(),
                                 this->end(),
                                 [key](Node node) {
-                                  if (node.name() == key) {
+                                  if (node.key() == key) {
                                     return true;
                                   }
 
@@ -460,7 +498,7 @@ Document::get(std::string_view key) const {
 }
 
 template <class InputType>
-typename type_traits<InputType>::return_type Array::at(int i) const {
+inline typename type_traits<InputType>::return_type Array::at(int i) const {
   auto iter = this->begin();
   for (int counter = 0; iter != this->end() && counter < i; ++iter, ++counter)
     ;
@@ -468,6 +506,26 @@ typename type_traits<InputType>::return_type Array::at(int i) const {
     return (*iter).template value<InputType>();
   } else {
     throw bson::OutOfRange{"no value by index: " + std::to_string(i)};
+  }
+}
+
+/**\brief special case if we need get some number and we don't care about type
+ * of it
+ */
+template <>
+inline typename type_traits<bson::Scalar>::return_type
+Node::value<bson::Scalar>() const noexcept(false) {
+  const byte *offset = data_ + 1 /*type*/ + this->key().size() + 1 /*\0*/;
+
+  switch (this->type()) {
+  case bson::double_node:
+    return *reinterpret_cast<const double *>(offset);
+  case bson::int32_node:
+    return *reinterpret_cast<const int32_t *>(offset);
+  case bson::int64_node:
+    return *reinterpret_cast<const int64_t *>(offset);
+  default:
+    throw bson::BadCast{};
   }
 }
 } // namespace microbson
