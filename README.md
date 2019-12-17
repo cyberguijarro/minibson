@@ -4,10 +4,11 @@ Zero-dependency C++ BSON libraries.
 
 ## Features
 
- * C++11 compliant
+ * C++17 compliant
  * Two flavours tailored for perfomance and footprint
  * Supports double, string, document, binary, boolean, null, 32-bit integer and 64-bit integer types
  * Header-only files (this may change soon)
+ * Supports serialization you own types in bson types by type_traits system 
 
 ## minibson
 
@@ -30,10 +31,3 @@ or deletions are yet supported.
  best choice. The only exception might be very large documents with lots of keys
  in each level (microbson lookups are linear, while minibson indexes allow lookups
  in logarithmic times)
-
-## Future improvements
-
- * Endianness support
- * Header/implementation file split
- * Mutability support in microbson
-
