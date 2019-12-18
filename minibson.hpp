@@ -286,7 +286,7 @@ public:
   Binary(std::vector<byte> &&buf) noexcept
       : buf_(std::move(buf)) {}
 
-  Binary(microbson::Binary b) noexcept {
+  explicit Binary(microbson::Binary b) noexcept {
     this->buf_.resize(b.second);
     std::memcpy(this->buf_.data(), b.first, b.second);
   }
@@ -328,7 +328,7 @@ public:
     microbson::Document doc{buffer, length};
     this->deserialize(doc);
   }
-  Document(microbson::Document doc) { this->deserialize(doc); }
+  explicit Document(microbson::Document doc) { this->deserialize(doc); }
 
   Document(const Document &)        = delete;
   Document(Document &&rhs) noexcept = default;
@@ -733,7 +733,7 @@ public:
     microbson::Document doc{buffer, length};
     this->deserialize(doc);
   }
-  Array(microbson::Array doc) { this->deserialize(doc); }
+  explicit Array(microbson::Array doc) { this->deserialize(doc); }
 
   Array(const Array &)     = delete;
   Array(Array &&) noexcept = default;
