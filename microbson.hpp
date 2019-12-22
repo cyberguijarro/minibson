@@ -185,7 +185,8 @@ public:
    * first four bytes and last symbol have to be \0
    */
   inline bool valid(int length) const noexcept {
-    return length >= 7 && this->length() == length && data_[length - 1] == '\0';
+    return length >= 7 && this->length() <= length &&
+           data_[this->length() - 1] == '\0';
   }
 
   inline bool empty() const noexcept { return !data_; }
