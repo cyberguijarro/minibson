@@ -70,16 +70,16 @@ void minibson_test() {
   d.set("cstring", "text");
   d.set("binary", minibson::Binary(&SOME_BUF_STR, sizeof(SOME_BUF_STR)));
   d.set("boolean", true);
-  d.set("document", minibson::Document().set("a", 3).set("b", 4));
+  d.set("document", std::move(minibson::Document().set("a", 3).set("b", 4)));
   d.set("some_other_string", "some_other_text");
   d.set("null");
   d.set("array",
-        minibson::Array{}
-            .push_back(0)
-            .push_back(1)
-            .push_back(std::string{"string"})
-            .push_back(std::string_view{"string_view"})
-            .push_back("cstring"));
+        std::move(minibson::Array{}
+                      .push_back(0)
+                      .push_back(1)
+                      .push_back(std::string{"string"})
+                      .push_back(std::string_view{"string_view"})
+                      .push_back("cstring")));
 
   d.set("some_value_for_change", 10);
   assert(d.get<int32_t>("some_value_for_change") == 10);
@@ -230,6 +230,19 @@ void minibson_test() {
   static_assert(
       std::is_reference<decltype(arrConst.at<minibson::Binary>(8))>::value);
   static_assert(!std::is_reference<decltype(arrConst.at<String>(9))>::value);
+
+  // check copys and moving
+  std::string alpha = "alpha";
+  d.set("tmp", alpha);
+  assert(alpha == "alpha");
+  d.set("tmp", std::move(alpha));
+  assert(alpha != "alpha");
+
+  alpha = "alpha";
+  arr.push_back(alpha);
+  assert(alpha == "alpha");
+  arr.push_back(std::move(alpha));
+  assert(alpha != "alpha");
 }
 
 void microbson_test() {
@@ -242,15 +255,15 @@ void microbson_test() {
   d.set("string", std::string{"text"});
   d.set("binary", minibson::Binary(&SOME_BUF_STR, sizeof(SOME_BUF_STR)));
   d.set("boolean", true);
-  d.set("document", minibson::Document().set("a", 3).set("b", 4));
+  d.set("document", std::move(minibson::Document().set("a", 3).set("b", 4)));
   d.set("some_other_string", "some_other_text");
   d.set("null");
   d.set("array",
-        minibson::Array{}
-            .push_back(0)
-            .push_back<double>(1)
-            .push_back<int64_t>(2)
-            .push_back(std::string{"string"}));
+        std::move(minibson::Array{}
+                      .push_back(0)
+                      .push_back<double>(1)
+                      .push_back<int64_t>(2)
+                      .push_back(std::string{"string"})));
 
   // serialize
   int   length = d.getSerializedSize();

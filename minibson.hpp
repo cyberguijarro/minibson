@@ -235,7 +235,9 @@ public:
 
 class UNodeValueFactory {
 public:
-  template <class InputType>
+  template <class InputType,
+            typename = typename std::enable_if<
+                std::is_rvalue_reference<InputType &&>::value>::type>
   static UNodeValue create(InputType &&val) noexcept {
     using value_type  = typename type_traits<InputType>::value_type;
     using return_type = typename type_traits<InputType>::return_type;
@@ -443,16 +445,17 @@ public:
   template <class InsertType,
             typename = typename std::enable_if<
                 !std::is_convertible<InsertType, const char *>::value>::type>
-  Document &set(std::string key, const InsertType &val) noexcept {
-    doc_.insert_or_assign(std::move(key), UNodeValueFactory::create(val));
+  Document &set(std::string_view key, const InsertType &val) noexcept {
+    doc_.insert_or_assign(std::string{key}, UNodeValueFactory::create(val));
     return *this;
   }
 
   template <class InsertType,
             typename = typename std::enable_if<
+                std::is_rvalue_reference<InsertType &&>::value &&
                 !std::is_convertible<InsertType, const char *>::value>::type>
-  Document &set(std::string key, InsertType &&val) noexcept {
-    doc_.insert_or_assign(std::move(key),
+  Document &set(std::string_view key, InsertType &&val) noexcept {
+    doc_.insert_or_assign(std::string{key},
                           UNodeValueFactory::create(std::move(val)));
     return *this;
   }
@@ -462,15 +465,15 @@ public:
   template <class InsertType,
             typename = typename std::enable_if<
                 std::is_convertible<InsertType, const char *>::value>::type>
-  Document &set(std::string key, InsertType val) noexcept {
+  Document &set(std::string_view key, InsertType val) noexcept {
     doc_.insert_or_assign(
-        std::move(key),
+        std::string{key},
         UNodeValueFactory::create(reinterpret_cast<const char *>(val)));
     return *this;
   }
 
-  Document &set(std::string key) noexcept {
-    doc_.insert_or_assign(std::move(key), UNodeValueFactory::create());
+  Document &set(std::string_view key) noexcept {
+    doc_.insert_or_assign(std::string{key}, UNodeValueFactory::create());
     return *this;
   }
 
@@ -846,6 +849,7 @@ public:
 
   template <class InsertType,
             typename = typename std::enable_if<
+                std::is_rvalue_reference<InsertType &&>::value &&
                 !std::is_convertible<InsertType, const char *>::value>::type>
   Array &push_back(InsertType &&val) {
     arr_.emplace_back(UNodeValueFactory::create(std::move(val)));
