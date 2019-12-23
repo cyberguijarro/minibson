@@ -166,7 +166,8 @@ public:
       : data_{nullptr} {}
 
   /**\param data pointer to serialized bson data
-   * \param length size of bson data. Not required, needed for validation
+   * \param length size of buffer with bson data. Must be equal or greater then
+   * serialized size of bson
    * \throw bson::InvalidArgument if data isn't `nullptr`, size set and
    * validation failed
    */
