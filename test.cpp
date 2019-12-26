@@ -400,9 +400,17 @@ void microbson_test() {
 
   delete[] buffer;
 
+  // test invalid bson
   uint8_t invalidBson[10]{};
   *reinterpret_cast<int *>(invalidBson) = 10;
   *(invalidBson + 4)                    = 0x10;
   microbson::Document invalidDoc{invalidBson, 10};
   assert(!invalidDoc.valid());
+
+  // test empty bson
+  microbson::Document emptyDoc{};
+  assert(emptyDoc.empty());
+  assert(emptyDoc.size() == 0);
+  assert(emptyDoc.length() == 0);
+  assert(std::distance(emptyDoc.begin(), emptyDoc.end()) == 0);
 }

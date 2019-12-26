@@ -362,10 +362,18 @@ public:
   };
 
   inline ConstIterator begin() const noexcept {
-    return ConstIterator{data_ + sizeof(int32_t)};
+    if (this->empty()) {
+      return ConstIterator{};
+    }
+
+    return ConstIterator{data_ + SIZE_OF_BSON_SIZE};
   }
 
   inline ConstIterator end() const noexcept {
+    if (this->empty()) {
+      return ConstIterator{};
+    }
+
     return ConstIterator{data_ + this->length() -
                          1 /*because at the end we have `\0`*/};
   }
