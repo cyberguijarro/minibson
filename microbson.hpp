@@ -93,7 +93,7 @@ public:
   }
 
   inline std::string_view key() const noexcept {
-    return std::string_view{reinterpret_cast<const char *>(data_) + 1};
+    return std::string_view{reinterpret_cast<const char *>(data_ + 1)};
   }
 
   /**\return binary length of the node. In case of some unexpected value return
@@ -101,6 +101,10 @@ public:
    */
   int length() const noexcept {
     int result = 1 /*type*/ + this->key().size() + 1 /*\0*/;
+
+    if (result == 2) { // then we have invalid key
+      return 0;
+    }
 
     switch (this->type()) {
     case bson::double_node:
@@ -127,7 +131,7 @@ public:
     case bson::int64_node:
       result += sizeof(int64_t);
       break;
-    case bson::unknown_node:
+    default:
       result = 0;
       break;
     };
@@ -142,10 +146,11 @@ public:
   typename type_traits<InputType>::return_type value() const noexcept(false) {
     using return_type = typename type_traits<InputType>::return_type;
 
+    constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
     constexpr return_type (*converter)(const void *) =
         type_traits<InputType>::converter;
 
-    if (this->type() != type_traits<InputType>::node_type_code) {
+    if (this->type() != nodeTypeCode) {
       throw bson::BadCast{};
     }
 
@@ -155,6 +160,33 @@ public:
   }
 
   const void *data() const noexcept { return data_; }
+
+  template <class InputType>
+  bool valid(int maxLength) const noexcept {
+    using return_type = typename type_traits<InputType>::return_type;
+
+    constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
+    constexpr return_type (*converter)(const void *) =
+        type_traits<InputType>::converter;
+
+    if (this->type() != nodeTypeCode ||
+        maxLength < 3 /*minimal size of node*/) {
+      return false;
+    }
+
+    if (int length = this->length(); !length || length > maxLength) {
+      return false;
+    }
+
+    try {
+      const byte *offset = data_ + 1 /*type*/ + this->key().size() + 1 /*\0*/;
+      converter(offset);
+    } catch (...) {
+      return false;
+    }
+
+    return true;
+  }
 
 private:
   const byte *data_;
@@ -170,10 +202,13 @@ public:
    * serialized size of bson
    * \throw bson::InvalidArgument if data isn't `nullptr`, size set and
    * validation failed
+   * \warning in konstructor cheks only size of bson and last byte (which must
+   * be `\0`), but it not validate nested fields. @see valid
    */
   Document(const void *data, int length)
       : data_{reinterpret_cast<const byte *>(data)} {
-    if (data_ && !this->valid(length)) {
+    if (data_ && !(length >= 7 && this->length() <= length &&
+                   data_[this->length() - 1] == '\0')) {
       throw bson::InvalidArgument{
           "invalid bson; input length: " + std::to_string(length) +
           ", serialized length: " + std::to_string(this->length())};
@@ -182,13 +217,10 @@ public:
 
   inline const void *data() const { return data_; }
 
-  /**\brief valid bson document have to have size >= 7, encode own size in
-   * first four bytes and last symbol have to be \0
+  /**\brief check all nested fields of bson and return true if all fine,
+   * otherwise - false
    */
-  inline bool valid(int length) const noexcept {
-    return length >= 7 && this->length() <= length &&
-           data_[this->length() - 1] == '\0';
-  }
+  bool valid() const noexcept;
 
   inline bool empty() const noexcept { return !data_; }
 
@@ -216,7 +248,9 @@ public:
         : offset_{nullptr} {}
 
     ConstIterator &operator++() noexcept {
-      offset_ += Node{offset_}.length();
+      offset_ += Node{offset_}.length(); // XXX because length() can be 0 in
+                                         // case of some not valid bson, this
+                                         // operation can have unexpected result
       return *this;
     }
 
@@ -241,25 +275,21 @@ public:
   private:
     /**\param toEnd move iterator to end of current document
      */
-    ConstIterator(const byte *data, bool toEnd = false)
-        : offset_{nullptr} {
-      if (data) {
-        if (toEnd) {
-          offset_ = data + *reinterpret_cast<const int *>(data) -
-                    1; // -1 because last element is \0
-        } else {
-          offset_ = data + sizeof(int); // move offset to first element
-        }
-      }
-    }
+    ConstIterator(const byte *offset)
+        : offset_{offset} {}
 
   private:
     const byte *offset_;
   };
 
-  ConstIterator begin() const noexcept { return ConstIterator{data_}; }
+  ConstIterator begin() const noexcept {
+    return ConstIterator{data_ + sizeof(int32_t)};
+  }
 
-  ConstIterator end() const noexcept { return ConstIterator{data_, true}; }
+  ConstIterator end() const noexcept {
+    return ConstIterator{data_ + this->length() -
+                         1 /*because at the end we have `\0`*/};
+  }
 
   template <class InputType>
   bool contains(std::string_view key) const noexcept;
@@ -268,9 +298,10 @@ public:
    */
   bool contains(std::string_view key) const noexcept;
 
-  /**\throw bson::OutOfRange if value not found or if value have different type
-   * \brief this safely function for get value from bson array by index, BUT!:
-   * this is very slowly. Use iterator where ever it possible
+  /**\throw bson::OutOfRange if value not found or if value have
+   * different type \brief this safely function for get value from bson
+   * array by index, BUT!: this is very slowly. Use iterator where ever
+   * it possible
    */
   template <class InputType>
   typename type_traits<InputType>::return_type get(std::string_view key) const
@@ -285,8 +316,8 @@ public:
   using Document::Document;
 
   /**\throw bson::OutOfRange if no value by index `i`
-   * \brief this safely function for get value from bson array by index, BUT!:
-   * this is very slowly. Use iterator where ever it possible
+   * \brief this safely function for get value from bson array by index,
+   * BUT!: this is very slowly. Use iterator where ever it possible
    */
   template <class InputType>
   typename type_traits<InputType>::return_type at(int i) const noexcept(false);
@@ -440,8 +471,72 @@ inline int Document::size() const noexcept {
   return std::distance(this->begin(), this->end());
 }
 
+bool Document::valid() const noexcept {
+  auto end = this->end();
+  for (auto i = this->begin(); i != end; ++i) {
+    Node node = *i;
+    switch (node.type()) {
+    case bson::string_node:
+      if (!node.valid<std::string_view>(
+              std::distance(i.offset_, end.offset_))) {
+        return false;
+      }
+      break;
+    case bson::boolean_node:
+      if (!node.valid<bool>(std::distance(i.offset_, end.offset_))) {
+        return false;
+      }
+      break;
+    case bson::int32_node:
+      if (!node.valid<int32_t>(std::distance(i.offset_, end.offset_))) {
+        return false;
+      }
+      break;
+    case bson::int64_node:
+      if (!node.valid<int64_t>(std::distance(i.offset_, end.offset_))) {
+        return false;
+      }
+      break;
+    case bson::double_node:
+      if (!node.valid<double>(std::distance(i.offset_, end.offset_))) {
+        return false;
+      }
+      break;
+    case bson::null_node:
+      if (!node.valid<void>(std::distance(i.offset_, end.offset_))) {
+        return false;
+      }
+      break;
+    case bson::binary_node:
+      if (!node.valid<Binary>(std::distance(i.offset_, end.offset_))) {
+        return false;
+      }
+      break;
+    case bson::array_node:
+      if (!node.valid<Array>(std::distance(i.offset_, end.offset_)) ||
+          !node.value<Array>().valid()) {
+        return false;
+      }
+      break;
+      break;
+    case bson::document_node:
+      if (!node.valid<Document>(std::distance(i.offset_, end.offset_)) ||
+          !node.value<Document>().valid()) {
+        return false;
+      }
+      break;
+    default:
+      return false;
+    }
+  }
+
+  return true;
+}
+
 template <class InputType>
 inline bool Document::contains(std::string_view key) const noexcept {
+  constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
+
   if (auto found = std::find_if(
           this->begin(),
           this->end(),
@@ -455,7 +550,7 @@ inline bool Document::contains(std::string_view key) const noexcept {
             return false;
           });
       found != this->end()) {
-    if ((*found).type() == type_traits<InputType>::node_type_code) {
+    if ((*found).type() == nodeTypeCode) {
       return true; // only with same key and type
     }
   }

@@ -172,7 +172,9 @@ public:
   }
 
   inline bson::NodeType type() const noexcept override {
-    return static_cast<bson::NodeType>(type_traits<T>::node_type_code);
+    constexpr bson::NodeType retval =
+        static_cast<bson::NodeType>(type_traits<T>::node_type_code);
+    return retval;
   }
 
   const value_type &value() const noexcept { return val_; }
@@ -227,7 +229,9 @@ public:
   NodeValueT() noexcept = default;
 
   bson::NodeType type() const noexcept override {
-    return static_cast<bson::NodeType>(type_traits<void>::node_type_code);
+    bson::NodeType retval =
+        static_cast<bson::NodeType>(type_traits<void>::node_type_code);
+    return retval;
   }
   int getSerializedSize() const noexcept override { return 0; }
   int serialize(void *, int) const override { return 0; }
@@ -506,9 +510,10 @@ public:
 
   template <typename Type>
   bool contains(const std::string &key) const noexcept {
+    constexpr int nodeTypeCode = type_traits<Type>::node_type_code;
+
     if (auto found = doc_.find(key);
-        found != doc_.end() &&
-        found->second->type() == type_traits<Type>::node_type_code) {
+        found != doc_.end() && found->second->type() == nodeTypeCode) {
       return true;
     }
     return false;
@@ -1127,8 +1132,7 @@ private:
 };
 
 inline void Document::deserialize(microbson::Document doc) {
-  for (auto i = doc.begin(); i != doc.end(); ++i) {
-    microbson::Node node = *i;
+  for (microbson::Node node : doc) {
     switch (node.type()) {
     case bson::string_node:
       doc_.emplace(node.key(),
@@ -1166,7 +1170,7 @@ inline void Document::deserialize(microbson::Document doc) {
           node.key(),
           UNodeValueFactory::create(Binary{node.value<microbson::Binary>()}));
       break;
-    case bson::unknown_node:
+    default:
       throw bson::InvalidArgument{"unknown node by key: " +
                                   std::string{node.key()}};
       break;
@@ -1213,8 +1217,7 @@ inline std::vector<byte> Document::serialize() const {
 
 inline void Array::deserialize(microbson::Document doc) {
   arr_.reserve(doc.size());
-  for (auto i = doc.begin(); i != doc.end(); ++i) {
-    microbson::Node node = *i;
+  for (microbson::Node node : doc) {
     switch (node.type()) {
     case bson::string_node:
       arr_.emplace_back(
@@ -1247,7 +1250,7 @@ inline void Array::deserialize(microbson::Document doc) {
       arr_.emplace_back(
           UNodeValueFactory::create(Binary{node.value<microbson::Binary>()}));
       break;
-    case bson::unknown_node:
+    default:
       throw bson::InvalidArgument{"unknown node by index: " +
                                   std::string{node.key()}};
       break;

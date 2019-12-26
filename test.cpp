@@ -280,7 +280,7 @@ void microbson_test() {
   microbson::Document doc{buffer, length};
 
   assert(!doc.empty());
-  assert(doc.valid(length));
+  assert(doc.valid());
   assert(doc.size() == 10);
 
   assert(doc.contains("int32"));
@@ -399,4 +399,10 @@ void microbson_test() {
   });
 
   delete[] buffer;
+
+  uint8_t invalidBson[10]{};
+  *reinterpret_cast<int *>(invalidBson) = 10;
+  *(invalidBson + 4)                    = 0x10;
+  microbson::Document invalidDoc{invalidBson, 10};
+  assert(!invalidDoc.valid());
 }
