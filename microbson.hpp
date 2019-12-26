@@ -9,6 +9,36 @@
 #include <string>
 #include <string_view>
 
+#define SIZE_OF_BSON_TYPE 1
+#define SIZE_OF_ZERO_BYTE 1
+#define SIZE_OF_BSON_SIZE 4
+#define SIZE_OF_BSON_SUBTYPE 1
+
+#define SIZE_OF_BOOLEAN_VALUE 1
+#define SIZE_OF_INT32_VALUE 4
+#define SIZE_OF_INT64_VALUE 8
+#define SIZE_OF_DOUBLE_VALUE 8
+#define SIZE_OF_NULL_VALUE 0
+
+#define MINIMAL_SIZE_OF_BSON_DOCUMENT SIZE_OF_BSON_SIZE + SIZE_OF_ZERO_BYTE
+
+#define MINIMAL_SIZE_OF_BSON_NODE SIZE_OF_BSON_TYPE + 1 + SIZE_OF_ZERO_BYTE
+#define MINIMAL_SIZE_OF_BSON_NULL_NODE 3
+#define MINIMAL_SIZE_OF_BSON_INT32_NODE                                        \
+  MINIMAL_SIZE_OF_BSON_NODE + SIZE_OF_INT32_VALUE
+#define MINIMAL_SIZE_OF_BSON_INT64_NODE                                        \
+  MINIMAL_SIZE_OF_BSON_NODE + SIZE_OF_INT64_VALUE
+#define MINIMAL_SIZE_OF_BSON_DOUBLE_NODE                                       \
+  MINIMAL_SIZE_OF_BSON_NODE + SIZE_OF_DOUBLE_VALUE
+#define MINIMAL_SIZE_OF_BSON_BOOLEAN_NODE                                      \
+  MINIMAL_SIZE_OF_BSON_NODE + SIZE_OF_BOOLEAN_VALUE
+#define MINIMAL_SIZE_OF_BSON_STRING_NODE                                       \
+  MINIMAL_SIZE_OF_BSON_NODE + 1 + SIZE_OF_ZERO_BYTE
+#define MINIMAL_SIZE_OF_BSON_BINARY_NODE                                       \
+  MINIMAL_SIZE_OF_BSON_NODE + SIZE_OF_BSON_SIZE + SIZE_OF_ZERO_BYTE
+#define MINIMAL_SIZE_OF_BSON_DOCUMENT_NODE                                     \
+  MINIMAL_SIZE_OF_BSON_NODE + MINIMAL_SIZE_OF_BSON_DOCUMENT
+
 namespace bson {
 class Exception {
 public:
@@ -93,43 +123,49 @@ public:
   }
 
   inline std::string_view key() const noexcept {
-    return std::string_view{reinterpret_cast<const char *>(data_ + 1)};
+    return std::string_view{
+        reinterpret_cast<const char *>(data_ + SIZE_OF_ZERO_BYTE)};
   }
 
   /**\return binary length of the node. In case of some unexpected value return
    * 0
    */
   int length() const noexcept {
-    int result = 1 /*type*/ + this->key().size() + 1 /*\0*/;
+    int result = SIZE_OF_BSON_TYPE + this->key().size() + SIZE_OF_ZERO_BYTE;
 
-    if (result == 2) { // then we have invalid key
+    if (result ==
+        SIZE_OF_BSON_TYPE + SIZE_OF_ZERO_BYTE) { // then we have invalid key
       return 0;
     }
 
     switch (this->type()) {
     case bson::double_node:
-      result += sizeof(double);
+      result += SIZE_OF_DOUBLE_VALUE;
       break;
     case bson::document_node:
     case bson::array_node:
-      result += *reinterpret_cast<const int *>(data_ + result);
+      result += *reinterpret_cast<const int32_t *>(data_ + result);
       break;
     case bson::string_node:
-      result += (sizeof(int) + *reinterpret_cast<const int *>(data_ + result));
+      result += (SIZE_OF_BSON_SIZE +
+                 *reinterpret_cast<const int32_t *>(data_ + result));
       break;
     case bson::binary_node:
-      result += (sizeof(int) + *reinterpret_cast<const int *>(data_ + result) +
-                 1 /*\0*/);
+      result += (SIZE_OF_BSON_SIZE +
+                 *reinterpret_cast<const int32_t *>(data_ + result) +
+                 SIZE_OF_ZERO_BYTE);
       break;
     case bson::boolean_node:
-      result += 1;
+      result += SIZE_OF_BOOLEAN_VALUE;
+      break;
     case bson::null_node:
+      result += SIZE_OF_NULL_VALUE;
       break;
     case bson::int32_node:
-      result += sizeof(int32_t);
+      result += SIZE_OF_INT32_VALUE;
       break;
     case bson::int64_node:
-      result += sizeof(int64_t);
+      result += SIZE_OF_INT64_VALUE;
       break;
     default:
       result = 0;
@@ -154,7 +190,8 @@ public:
       throw bson::BadCast{};
     }
 
-    const byte *offset = data_ + 1 /*type*/ + this->key().size() + 1 /*\0*/;
+    const byte *offset =
+        data_ + SIZE_OF_BSON_TYPE + this->key().size() + SIZE_OF_ZERO_BYTE;
 
     return converter(offset);
   }
@@ -163,25 +200,60 @@ public:
 
   template <class InputType>
   bool valid(int maxLength) const noexcept {
-    using return_type = typename type_traits<InputType>::return_type;
-
     constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
-    constexpr return_type (*converter)(const void *) =
-        type_traits<InputType>::converter;
 
-    if (this->type() != nodeTypeCode ||
-        maxLength < 3 /*minimal size of node*/) {
+    if (this->type() != nodeTypeCode) {
       return false;
+    }
+
+    switch (this->type()) {
+    case bson::boolean_node:
+      if (maxLength < MINIMAL_SIZE_OF_BSON_BOOLEAN_NODE) {
+        return false;
+      }
+      break;
+    case bson::double_node:
+      if (maxLength < MINIMAL_SIZE_OF_BSON_DOUBLE_NODE) {
+        return false;
+      }
+      break;
+    case bson::int32_node:
+      if (maxLength < MINIMAL_SIZE_OF_BSON_INT32_NODE) {
+        return false;
+      }
+      break;
+    case bson::int64_node:
+      if (maxLength < MINIMAL_SIZE_OF_BSON_INT64_NODE) {
+        return false;
+      }
+      break;
+    case bson::string_node:
+      if (maxLength < MINIMAL_SIZE_OF_BSON_STRING_NODE) {
+        return false;
+      }
+      break;
+    case bson::binary_node:
+      if (maxLength < MINIMAL_SIZE_OF_BSON_BINARY_NODE) {
+        return false;
+      }
+      break;
+    case bson::document_node:
+    case bson::array_node:
+      if (maxLength < MINIMAL_SIZE_OF_BSON_DOCUMENT_NODE) {
+        return false;
+      }
+      break;
+    case bson::null_node:
+      if (maxLength < MINIMAL_SIZE_OF_BSON_NULL_NODE) {
+        return false;
+      }
+      break;
+    default:
+      return false;
+      break;
     }
 
     if (int length = this->length(); !length || length > maxLength) {
-      return false;
-    }
-
-    try {
-      const byte *offset = data_ + 1 /*type*/ + this->key().size() + 1 /*\0*/;
-      converter(offset);
-    } catch (...) {
       return false;
     }
 
@@ -209,8 +281,9 @@ public:
    */
   Document(const void *data, int length)
       : data_{reinterpret_cast<const byte *>(data)} {
-    if (data_ && !(length >= 7 && this->length() <= length &&
-                   data_[this->length() - 1] == '\0')) {
+    if (data_ &&
+        !(length >= MINIMAL_SIZE_OF_BSON_DOCUMENT && this->length() <= length &&
+          data_[this->length() - 1] == '\0')) {
       throw bson::InvalidArgument{
           "invalid bson; input length: " + std::to_string(length) +
           ", serialized length: " + std::to_string(this->length())};
@@ -395,7 +468,7 @@ struct type_traits<std::string> {
   using value_type  = std::string_view;
   using return_type = std::string;
   static std::string converter(const void *ptr) {
-    return reinterpret_cast<const char *>(ptr) + 4 /*size*/;
+    return reinterpret_cast<const char *>(ptr) + SIZE_OF_BSON_SIZE;
   }
 };
 
@@ -405,7 +478,7 @@ struct type_traits<std::string_view> {
   using value_type  = std::string_view;
   using return_type = std::string_view;
   static std::string_view converter(const void *ptr) {
-    return reinterpret_cast<const char *>(ptr) + 4 /*size*/;
+    return reinterpret_cast<const char *>(ptr) + SIZE_OF_BSON_SIZE;
   }
 };
 
@@ -453,8 +526,8 @@ struct type_traits<Binary> {
   using value_type  = Binary;
   using return_type = Binary;
   static Binary converter(const void *ptr) {
-    return Binary{reinterpret_cast<const byte *>(ptr) + 4 /*size*/ +
-                      1 /*subtype*/,
+    return Binary{reinterpret_cast<const byte *>(ptr) + SIZE_OF_BSON_SIZE +
+                      SIZE_OF_BSON_SUBTYPE,
                   *reinterpret_cast<const int *>(ptr)};
   }
 };
@@ -481,57 +554,54 @@ inline int Document::size() const noexcept {
   return std::distance(this->begin(), this->end());
 }
 
-bool Document::valid() const noexcept {
+inline bool Document::valid() const noexcept {
   auto end = this->end();
   for (auto i = this->begin(); i != end; ++i) {
-    Node node = *i;
+    Node node      = *i;
+    int  maxLength = std::distance(i.offset_, end.offset_);
     switch (node.type()) {
     case bson::string_node:
-      if (!node.valid<std::string_view>(
-              std::distance(i.offset_, end.offset_))) {
+      if (!node.valid<std::string_view>(maxLength)) {
         return false;
       }
       break;
     case bson::boolean_node:
-      if (!node.valid<bool>(std::distance(i.offset_, end.offset_))) {
+      if (!node.valid<bool>(maxLength)) {
         return false;
       }
       break;
     case bson::int32_node:
-      if (!node.valid<int32_t>(std::distance(i.offset_, end.offset_))) {
+      if (!node.valid<int32_t>(maxLength)) {
         return false;
       }
       break;
     case bson::int64_node:
-      if (!node.valid<int64_t>(std::distance(i.offset_, end.offset_))) {
+      if (!node.valid<int64_t>(maxLength)) {
         return false;
       }
       break;
     case bson::double_node:
-      if (!node.valid<double>(std::distance(i.offset_, end.offset_))) {
+      if (!node.valid<double>(maxLength)) {
         return false;
       }
       break;
     case bson::null_node:
-      if (!node.valid<void>(std::distance(i.offset_, end.offset_))) {
+      if (!node.valid<void>(maxLength)) {
         return false;
       }
       break;
     case bson::binary_node:
-      if (!node.valid<Binary>(std::distance(i.offset_, end.offset_))) {
+      if (!node.valid<Binary>(maxLength)) {
         return false;
       }
       break;
     case bson::array_node:
-      if (!node.valid<Array>(std::distance(i.offset_, end.offset_)) ||
-          !node.value<Array>().valid()) {
+      if (!node.valid<Array>(maxLength) || !node.value<Array>().valid()) {
         return false;
       }
       break;
-      break;
     case bson::document_node:
-      if (!node.valid<Document>(std::distance(i.offset_, end.offset_)) ||
-          !node.value<Document>().valid()) {
+      if (!node.valid<Document>(maxLength) || !node.value<Document>().valid()) {
         return false;
       }
       break;
@@ -622,7 +692,8 @@ inline typename type_traits<InputType>::return_type Array::at(int i) const {
 template <>
 inline typename type_traits<bson::Scalar>::return_type
 Node::value<bson::Scalar>() const noexcept(false) {
-  const byte *offset = data_ + 1 /*type*/ + this->key().size() + 1 /*\0*/;
+  const byte *offset =
+      data_ + SIZE_OF_BSON_TYPE + this->key().size() + SIZE_OF_ZERO_BYTE;
 
   switch (this->type()) {
   case bson::double_node:

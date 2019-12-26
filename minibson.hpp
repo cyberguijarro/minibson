@@ -182,13 +182,13 @@ public:
 
   int getSerializedSize() const noexcept override {
     if constexpr (std::is_same<value_type, std::string>::value) {
-      return 4 /*size*/ + val_.size() + 1 /*\0*/;
+      return SIZE_OF_BSON_SIZE + val_.size() + SIZE_OF_ZERO_BYTE;
     } else if constexpr (std::is_same<value_type, Array>::value ||
                          std::is_same<value_type, Document>::value ||
                          std::is_same<value_type, Binary>::value) {
       return val_.getSerializedSize();
     } else if constexpr (std::is_same<value_type, bool>::value) {
-      return 1;
+      return SIZE_OF_BOOLEAN_VALUE;
     } else {
       return sizeof(val_);
     }
@@ -200,17 +200,17 @@ public:
     }
 
     if constexpr (std::is_same<value_type, std::string>::value) {
-      *reinterpret_cast<int *>(buf) = val_.size() + 1 /*\0*/;
-      char *ptr = reinterpret_cast<char *>(buf) + 4 /*size*/;
+      *reinterpret_cast<int *>(buf) = val_.size() + SIZE_OF_ZERO_BYTE;
+      char *ptr = reinterpret_cast<char *>(buf) + SIZE_OF_BSON_SIZE;
       std::strcpy(ptr, val_.c_str());
-      return 4 /*size*/ + val_.size() + 1 /*\0*/;
+      return SIZE_OF_BSON_SIZE + val_.size() + SIZE_OF_ZERO_BYTE;
     } else if constexpr (std::is_same<value_type, Array>::value ||
                          std::is_same<value_type, Document>::value ||
                          std::is_same<value_type, Binary>::value) {
       return val_.serialize(buf, length);
     } else if constexpr (std::is_same<value_type, bool>::value) {
       *reinterpret_cast<byte *>(buf) = val_;
-      return 1;
+      return SIZE_OF_BOOLEAN_VALUE;
     } else {
       *reinterpret_cast<value_type *>(buf) = val_;
       return sizeof(val_);
@@ -233,8 +233,8 @@ public:
         static_cast<bson::NodeType>(type_traits<void>::node_type_code);
     return retval;
   }
-  int getSerializedSize() const noexcept override { return 0; }
-  int serialize(void *, int) const override { return 0; }
+  int getSerializedSize() const noexcept override { return SIZE_OF_NULL_VALUE; }
+  int serialize(void *, int) const override { return SIZE_OF_NULL_VALUE; }
 };
 
 class UNodeValueFactory {
@@ -302,21 +302,21 @@ public:
 
   constexpr bson::NodeType type() const noexcept { return bson::binary_node; }
   inline int               getSerializedSize() const noexcept {
-    return 4 /*size*/ + 1 /*subtype*/ + buf_.size();
+    return SIZE_OF_BSON_SIZE + SIZE_OF_BSON_SUBTYPE + buf_.size();
   }
   int serialize(void *buf, int bufSize) const {
     int size = buf_.size();
-    if (bufSize < 4 /*size*/ + 1 /*subtype*/ + size) {
+    if (bufSize < SIZE_OF_BSON_SIZE + SIZE_OF_BSON_SUBTYPE + size) {
       throw bson::InvalidArgument{MEMORY_ERROR};
     }
 
     *reinterpret_cast<int *>(buf) = size;
-    byte *ptr                     = reinterpret_cast<byte *>(buf) + 4 /*size*/;
-    *ptr                          = '\0'; // binary subtype
+    byte *ptr = reinterpret_cast<byte *>(buf) + SIZE_OF_BSON_SIZE;
+    *ptr      = '\0'; // binary subtype
     ++ptr;
     std::memcpy(ptr, buf_.data(), size);
     *(ptr + size) = '\0';
-    return 4 /*size*/ + 1 /*subtype*/ + size;
+    return SIZE_OF_BSON_SIZE + SIZE_OF_BSON_SUBTYPE + size;
   }
 
   std::vector<byte> buf_;
@@ -342,11 +342,12 @@ public:
 
   constexpr bson::NodeType type() const noexcept { return bson::document_node; }
   int                      getSerializedSize() const noexcept {
-    int count = 4 /*size*/;
+    int count = SIZE_OF_BSON_SIZE;
     for (auto &[key, val] : doc_) {
-      count += 1 /*type*/ + key.size() + 1 /*\0*/ + val->getSerializedSize();
+      count += SIZE_OF_BSON_TYPE + key.size() + SIZE_OF_ZERO_BYTE +
+               val->getSerializedSize();
     }
-    return count + 1 /*\0*/;
+    return count + SIZE_OF_ZERO_BYTE;
   }
 
   inline int size() const noexcept { return doc_.size(); }
@@ -755,12 +756,12 @@ public:
 
   constexpr bson::NodeType type() const noexcept { return bson::array_node; }
   int                      getSerializedSize() const noexcept {
-    int count = 4 /*size*/;
+    int count = SIZE_OF_BSON_SIZE;
     for (size_t i = 0; i < arr_.size(); ++i) {
-      count += 1 /*type*/ + std::to_string(i).size() + 1 /*\0*/ +
-               arr_[i]->getSerializedSize();
+      count += SIZE_OF_BSON_TYPE + std::to_string(i).size() +
+               SIZE_OF_ZERO_BYTE + arr_[i]->getSerializedSize();
     }
-    return count + 1 /*\0*/;
+    return count + SIZE_OF_ZERO_BYTE;
   }
 
   /**\brief serialize in existing buffer
@@ -1195,15 +1196,15 @@ inline int Document::serialize(void *buf, int length) const {
 
   *reinterpret_cast<int *>(buf) = size;
   char *ptr                     = reinterpret_cast<char *>(buf);
-  int   offset                  = 4 /*size*/;
+  int   offset                  = SIZE_OF_BSON_SIZE;
   for (auto &[key, val] : doc_) {
     // serialize type and key
     *(ptr + offset) = val->type();
     ++offset;
     std::strcpy(ptr + offset, key.c_str());
-    offset += key.size() + 1;
+    offset += key.size() + SIZE_OF_ZERO_BYTE;
 
-    offset += val->serialize(ptr + offset, length - offset - 1 /*\0*/);
+    offset += val->serialize(ptr + offset, length - offset - SIZE_OF_ZERO_BYTE);
   }
 
   *(ptr + offset) = '\0';
@@ -1275,7 +1276,7 @@ inline int Array::serialize(void *buf, int length) const {
 
   *reinterpret_cast<int *>(buf) = size;
   char *ptr                     = reinterpret_cast<char *>(buf);
-  int   offset                  = 4 /*size*/;
+  int   offset                  = SIZE_OF_BSON_SIZE;
   for (size_t i = 0; i < arr_.size(); ++i) {
     std::string       key = std::to_string(i);
     const UNodeValue &val = arr_[i];
@@ -1284,9 +1285,9 @@ inline int Array::serialize(void *buf, int length) const {
     *(ptr + offset) = val->type();
     ++offset;
     std::strcpy(ptr + offset, key.c_str());
-    offset += key.size() + 1;
+    offset += key.size() + SIZE_OF_ZERO_BYTE;
 
-    offset += val->serialize(ptr + offset, length - offset - 1 /*\0*/);
+    offset += val->serialize(ptr + offset, length - offset - SIZE_OF_ZERO_BYTE);
   }
 
   *(ptr + offset) = '\0';
