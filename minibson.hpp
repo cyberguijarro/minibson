@@ -228,7 +228,7 @@ public:
 
   NodeValueT() noexcept = default;
 
-  bson::NodeType type() const noexcept override {
+  inline bson::NodeType type() const noexcept override {
     bson::NodeType retval =
         static_cast<bson::NodeType>(type_traits<void>::node_type_code);
     return retval;
@@ -348,6 +348,8 @@ public:
     }
     return count + 1 /*\0*/;
   }
+
+  inline int size() const noexcept { return doc_.size(); }
 
   /**\throw bson::InvalidArgument if memory not enough
    * \brief serialize in existing buffer
@@ -722,10 +724,14 @@ public:
     imp_iter_type imp_;
   };
 
-  Iterator      begin() noexcept { return Iterator{doc_.begin()}; }
-  Iterator      end() noexcept { return Iterator{doc_.end()}; }
-  ConstIterator begin() const noexcept { return ConstIterator{doc_.begin()}; }
-  ConstIterator end() const noexcept { return ConstIterator{doc_.end()}; }
+  inline Iterator      begin() noexcept { return Iterator{doc_.begin()}; }
+  inline Iterator      end() noexcept { return Iterator{doc_.end()}; }
+  inline ConstIterator begin() const noexcept {
+    return ConstIterator{doc_.begin()};
+  }
+  inline ConstIterator end() const noexcept {
+    return ConstIterator{doc_.end()};
+  }
 
 private:
   void deserialize(microbson::Document doc);
@@ -769,7 +775,7 @@ public:
 
   void reserve(int n) noexcept { this->arr_.reserve(n); }
 
-  int size() const { return arr_.size(); }
+  inline int size() const { return arr_.size(); }
 
   /**\throw bson::OutOfRange or bson::BadCast
    */
@@ -1117,10 +1123,12 @@ public:
     imp_iter_type imp_;
     size_t        num_;
   };
-  Iterator      begin() noexcept { return Iterator{arr_.begin(), 0}; }
-  Iterator      end() noexcept { return Iterator{arr_.end(), arr_.size()}; }
-  ConstIterator begin() const noexcept { return ConstIterator{arr_.data(), 0}; }
-  ConstIterator end() const noexcept {
+  inline Iterator begin() noexcept { return Iterator{arr_.begin(), 0}; }
+  inline Iterator end() noexcept { return Iterator{arr_.end(), arr_.size()}; }
+  inline ConstIterator begin() const noexcept {
+    return ConstIterator{arr_.data(), 0};
+  }
+  inline ConstIterator end() const noexcept {
     return ConstIterator{arr_.data(), arr_.size()};
   }
 

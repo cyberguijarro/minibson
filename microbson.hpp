@@ -197,6 +197,8 @@ public:
   Document()
       : data_{nullptr} {}
 
+  virtual ~Document() = default;
+
   /**\param data pointer to serialized bson data
    * \param length size of buffer with bson data. Must be equal or greater then
    * serialized size of bson
@@ -217,6 +219,10 @@ public:
 
   inline const void *data() const { return data_; }
 
+  inline virtual bson::NodeType type() const noexcept {
+    return bson::NodeType::document_node;
+  }
+
   /**\brief check all nested fields of bson and return true if all fine,
    * otherwise - false
    */
@@ -236,7 +242,7 @@ public:
 
   /**\return capacity of nodes in the document
    */
-  int size() const noexcept;
+  inline int size() const noexcept;
 
   /**\brief forward iterator
    */
@@ -282,11 +288,11 @@ public:
     const byte *offset_;
   };
 
-  ConstIterator begin() const noexcept {
+  inline ConstIterator begin() const noexcept {
     return ConstIterator{data_ + sizeof(int32_t)};
   }
 
-  ConstIterator end() const noexcept {
+  inline ConstIterator end() const noexcept {
     return ConstIterator{data_ + this->length() -
                          1 /*because at the end we have `\0`*/};
   }
@@ -327,6 +333,10 @@ public:
 
   template <class T>
   T get(std::string_view) const = delete;
+
+  inline bson::NodeType type() const noexcept override {
+    return bson::array_node;
+  }
 };
 
 template <>
