@@ -778,6 +778,20 @@ public:
 
   inline int size() const { return arr_.size(); }
 
+  template <class Type>
+  bool contains(int i) const noexcept {
+    constexpr int nodeTypeCode = type_traits<Type>::node_type_code;
+
+    if (arr_.size() < size_t(i)) {
+      return false;
+    }
+
+    if (auto &found = arr_[i]; found->type() == nodeTypeCode) {
+      return true;
+    }
+    return false;
+  }
+
   /**\throw bson::OutOfRange or bson::BadCast
    */
   template <

@@ -410,10 +410,16 @@ public:
   typename type_traits<InputType>::return_type at(int i) const noexcept(false);
 
   template <class T>
+  T get(std::string_view) const = delete;
+
+  template <class T>
+  bool contains(std::string_view) const noexcept = delete;
   bool contains(std::string_view) const noexcept = delete;
 
   template <class T>
-  T get(std::string_view) const = delete;
+  bool contains(int i) const noexcept {
+    return Document::contains<T>(std::to_string(i));
+  }
 
   inline bson::NodeType type() const noexcept override {
     return bson::array_node;

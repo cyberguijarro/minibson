@@ -186,6 +186,17 @@ void minibson_test() {
 
   assert(++iter == arr.end());
 
+  assert(arr.contains<int32_t>(0));
+  assert(arr.contains<int64_t>(1));
+  assert(arr.contains<double>(2));
+  assert(arr.contains<bool>(3));
+  assert(arr.contains<std::string_view>(4));
+  assert(arr.contains<std::string_view>(5));
+  assert(arr.contains<std::string_view>(6));
+  assert(arr.contains<void>(7));
+  assert(arr.contains<String>(8));
+  assert(arr.contains<String>(9));
+
   assert(arr.at<int32_t>(0) == 10);
   assert(arr.at<int64_t>(1) == 10);
   assert(arr.at<double>(2) == 10.0);
@@ -340,6 +351,11 @@ void microbson_test() {
   assert(nestedDoc.get<int32_t>("b") == 4);
 
   microbson::Array a = doc.get<microbson::Array>("array");
+  assert(a.contains<int32_t>(0));
+  assert(a.contains<double>(1));
+  assert(a.contains<int64_t>(2));
+  assert(a.contains<std::string_view>(3));
+
   assert(a.size() == 4);
   assert(a.at<int32_t>(0) == 0);
   assert(a.at<double>(1) == 1);
