@@ -132,7 +132,7 @@ class NodeValue {
 public:
   virtual ~NodeValue() = default;
 
-  virtual bson::NodeType type() const noexcept = 0;
+  [[nodiscard]] virtual bson::NodeType type() const noexcept = 0;
   /**\param buf where will be writed data
    * \param length max capacity of bytes for serialization
    * \return capacity of serialized bytes
@@ -142,7 +142,7 @@ public:
 
   /**\return count of bytes, needed for serialization
    */
-  virtual int getSerializedSize() const noexcept = 0;
+  [[nodiscard]] virtual int getSerializedSize() const noexcept = 0;
 };
 
 using UNodeValue = std::unique_ptr<NodeValue>;
@@ -171,16 +171,16 @@ public:
         std::is_same<T, int32_t>::value || std::is_same<T, int64_t>::value);
   }
 
-  inline bson::NodeType type() const noexcept override {
+  [[nodiscard]] inline bson::NodeType type() const noexcept override {
     constexpr bson::NodeType retval =
         static_cast<bson::NodeType>(type_traits<T>::node_type_code);
     return retval;
   }
 
-  const value_type &value() const noexcept { return val_; }
-  value_type &      value() noexcept { return val_; }
+  [[nodiscard]] const value_type &value() const noexcept { return val_; }
+  [[nodiscard]] value_type &      value() noexcept { return val_; }
 
-  int getSerializedSize() const noexcept override {
+  [[nodiscard]] int getSerializedSize() const noexcept override {
     if constexpr (std::is_same<value_type, std::string>::value) {
       return SIZE_OF_BSON_SIZE + val_.size() + SIZE_OF_ZERO_BYTE;
     } else if constexpr (std::is_same<value_type, Array>::value ||
@@ -228,12 +228,14 @@ public:
 
   NodeValueT() noexcept = default;
 
-  inline bson::NodeType type() const noexcept override {
+  [[nodiscard]] inline bson::NodeType type() const noexcept override {
     bson::NodeType retval =
         static_cast<bson::NodeType>(type_traits<void>::node_type_code);
     return retval;
   }
-  int getSerializedSize() const noexcept override { return SIZE_OF_NULL_VALUE; }
+  [[nodiscard]] int getSerializedSize() const noexcept override {
+    return SIZE_OF_NULL_VALUE;
+  }
   int serialize(void *, int) const override { return SIZE_OF_NULL_VALUE; }
 };
 
@@ -242,7 +244,7 @@ public:
   template <class InputType,
             typename = typename std::enable_if<
                 std::is_rvalue_reference<InputType &&>::value>::type>
-  static UNodeValue create(InputType &&val) noexcept {
+  [[nodiscard]] static UNodeValue create(InputType &&val) noexcept {
     using value_type  = typename type_traits<InputType>::value_type;
     using return_type = typename type_traits<InputType>::return_type;
 
@@ -262,7 +264,7 @@ public:
   }
 
   template <class InputType>
-  static UNodeValue create(const InputType &val) noexcept {
+  [[nodiscard]] static UNodeValue create(const InputType &val) noexcept {
     using value_type  = typename type_traits<InputType>::value_type;
     using return_type = typename type_traits<InputType>::return_type;
 
@@ -279,7 +281,9 @@ public:
     }
   }
 
-  static UNodeValue create() { return std::make_unique<NodeValueT<void>>(); }
+  [[nodiscard]] static UNodeValue create() noexcept {
+    return std::make_unique<NodeValueT<void>>();
+  }
 };
 
 class Binary final {
@@ -300,8 +304,10 @@ public:
   Binary(const Binary &)     = delete;
   Binary(Binary &&) noexcept = default;
 
-  constexpr bson::NodeType type() const noexcept { return bson::binary_node; }
-  inline int               getSerializedSize() const noexcept {
+  [[nodiscard]] constexpr bson::NodeType type() const noexcept {
+    return bson::binary_node;
+  }
+  [[nodiscard]] inline int getSerializedSize() const noexcept {
     return SIZE_OF_BSON_SIZE + SIZE_OF_BSON_SUBTYPE + buf_.size();
   }
   int serialize(void *buf, int bufSize) const {
@@ -340,8 +346,10 @@ public:
   Document(Document &&rhs) noexcept = default;
   Document &operator=(Document &&) noexcept = default;
 
-  constexpr bson::NodeType type() const noexcept { return bson::document_node; }
-  int                      getSerializedSize() const noexcept {
+  [[nodiscard]] constexpr bson::NodeType type() const noexcept {
+    return bson::document_node;
+  }
+  [[nodiscard]] int getSerializedSize() const noexcept {
     int count = SIZE_OF_BSON_SIZE;
     for (auto &[key, val] : doc_) {
       count += SIZE_OF_BSON_TYPE + key.size() + SIZE_OF_ZERO_BYTE +
@@ -350,7 +358,7 @@ public:
     return count + SIZE_OF_ZERO_BYTE;
   }
 
-  inline int size() const noexcept { return doc_.size(); }
+  [[nodiscard]] inline int size() const noexcept { return doc_.size(); }
 
   /**\throw bson::InvalidArgument if memory not enough
    * \brief serialize in existing buffer
@@ -504,7 +512,7 @@ public:
     return *this;
   }
 
-  bool contains(const std::string &key) const noexcept {
+  [[nodiscard]] bool contains(const std::string &key) const noexcept {
     if (auto found = doc_.find(key); found != doc_.end()) {
       return true;
     }
@@ -512,7 +520,7 @@ public:
   }
 
   template <typename Type>
-  bool contains(const std::string &key) const noexcept {
+  [[nodiscard]] bool contains(const std::string &key) const noexcept {
     constexpr int nodeTypeCode = type_traits<Type>::node_type_code;
 
     if (auto found = doc_.find(key);
@@ -551,16 +559,20 @@ public:
       return *this;
     }
 
-    UNodeValue &operator*() noexcept { return imp_->second; }
-    bool        operator==(const Iterator &rhs) const noexcept {
+    [[nodiscard]] UNodeValue &operator*() noexcept { return imp_->second; }
+    [[nodiscard]] bool        operator==(const Iterator &rhs) const noexcept {
       return this->imp_ == rhs.imp_;
     }
-    bool operator!=(const Iterator &rhs) const noexcept {
+    [[nodiscard]] bool operator!=(const Iterator &rhs) const noexcept {
       return this->imp_ != rhs.imp_;
     }
 
-    inline bson::NodeType type() const noexcept { return imp_->second->type(); }
-    inline const std::string &key() const noexcept { return imp_->first; }
+    [[nodiscard]] inline bson::NodeType type() const noexcept {
+      return imp_->second->type();
+    }
+    [[nodiscard]] inline const std::string &key() const noexcept {
+      return imp_->first;
+    }
 
     /**\throw bson::BadCast
      */
@@ -650,16 +662,22 @@ public:
       return *this;
     }
 
-    const UNodeValue &operator*() const noexcept { return imp_->second; }
-    bool              operator==(const Iterator &rhs) const noexcept {
+    [[nodiscard]] const UNodeValue &operator*() const noexcept {
+      return imp_->second;
+    }
+    [[nodiscard]] bool operator==(const Iterator &rhs) const noexcept {
       return this->imp_ == rhs.imp_;
     }
-    bool operator!=(const Iterator &rhs) const noexcept {
+    [[nodiscard]] bool operator!=(const Iterator &rhs) const noexcept {
       return this->imp_ != rhs.imp_;
     }
 
-    inline bson::NodeType type() const noexcept { return imp_->second->type(); }
-    inline const std::string &key() const noexcept { return imp_->first; }
+    [[nodiscard]] inline bson::NodeType type() const noexcept {
+      return imp_->second->type();
+    }
+    [[nodiscard]] inline const std::string &key() const noexcept {
+      return imp_->first;
+    }
 
     /**\throw bson::BadCast
      */
@@ -725,12 +743,14 @@ public:
     imp_iter_type imp_;
   };
 
-  inline Iterator      begin() noexcept { return Iterator{doc_.begin()}; }
-  inline Iterator      end() noexcept { return Iterator{doc_.end()}; }
-  inline ConstIterator begin() const noexcept {
+  [[nodiscard]] inline Iterator begin() noexcept {
+    return Iterator{doc_.begin()};
+  }
+  [[nodiscard]] inline Iterator end() noexcept { return Iterator{doc_.end()}; }
+  [[nodiscard]] inline ConstIterator begin() const noexcept {
     return ConstIterator{doc_.begin()};
   }
-  inline ConstIterator end() const noexcept {
+  [[nodiscard]] inline ConstIterator end() const noexcept {
     return ConstIterator{doc_.end()};
   }
 
@@ -754,8 +774,10 @@ public:
   Array(Array &&) noexcept = default;
   Array &operator=(Array &&) noexcept = default;
 
-  constexpr bson::NodeType type() const noexcept { return bson::array_node; }
-  int                      getSerializedSize() const noexcept {
+  [[nodiscard]] constexpr bson::NodeType type() const noexcept {
+    return bson::array_node;
+  }
+  [[nodiscard]] int getSerializedSize() const noexcept {
     int count = SIZE_OF_BSON_SIZE;
     for (size_t i = 0; i < arr_.size(); ++i) {
       count += SIZE_OF_BSON_TYPE + std::to_string(i).size() +
@@ -776,10 +798,10 @@ public:
 
   void reserve(int n) noexcept { this->arr_.reserve(n); }
 
-  inline int size() const { return arr_.size(); }
+  [[nodiscard]] inline int size() const noexcept { return arr_.size(); }
 
   template <class Type>
-  bool contains(int i) const noexcept {
+  [[nodiscard]] bool contains(int i) const noexcept {
     constexpr int nodeTypeCode = type_traits<Type>::node_type_code;
 
     if (arr_.size() < size_t(i)) {
@@ -963,16 +985,20 @@ public:
       return *this;
     }
 
-    UNodeValue &operator*() noexcept { return *imp_; }
-    bool        operator==(const Iterator &rhs) const noexcept {
+    [[nodiscard]] UNodeValue &operator*() noexcept { return *imp_; }
+    [[nodiscard]] bool        operator==(const Iterator &rhs) const noexcept {
       return this->imp_ == rhs.imp_;
     }
-    bool operator!=(const Iterator &rhs) const noexcept {
+    [[nodiscard]] bool operator!=(const Iterator &rhs) const noexcept {
       return this->imp_ != rhs.imp_;
     }
 
-    inline bson::NodeType type() const noexcept { return (*imp_)->type(); }
-    inline std::string    key() const noexcept { return std::to_string(num_); }
+    [[nodiscard]] inline bson::NodeType type() const noexcept {
+      return (*imp_)->type();
+    }
+    [[nodiscard]] inline std::string key() const noexcept {
+      return std::to_string(num_);
+    }
 
     /**\throw bson::BadCast
      */
@@ -1062,18 +1088,22 @@ public:
       return *this;
     }
 
-    const UNodeValue &operator*() const noexcept { return *(imp_ + num_); }
-    bool              operator==(const ConstIterator &rhs) const noexcept {
+    [[nodiscard]] const UNodeValue &operator*() const noexcept {
+      return *(imp_ + num_);
+    }
+    [[nodiscard]] bool operator==(const ConstIterator &rhs) const noexcept {
       return this->imp_ + this->num_ == rhs.imp_ + rhs.num_;
     }
-    bool operator!=(const ConstIterator &rhs) const noexcept {
+    [[nodiscard]] bool operator!=(const ConstIterator &rhs) const noexcept {
       return this->imp_ + this->num_ != rhs.imp_ + rhs.num_;
     }
 
-    inline bson::NodeType type() const noexcept {
+    [[nodiscard]] inline bson::NodeType type() const noexcept {
       return (*(imp_ + num_))->type();
     }
-    inline std::string key() const noexcept { return std::to_string(num_); }
+    [[nodiscard]] inline std::string key() const noexcept {
+      return std::to_string(num_);
+    }
 
     /**\throw bson::BadCast
      */
@@ -1138,12 +1168,16 @@ public:
     imp_iter_type imp_;
     size_t        num_;
   };
-  inline Iterator begin() noexcept { return Iterator{arr_.begin(), 0}; }
-  inline Iterator end() noexcept { return Iterator{arr_.end(), arr_.size()}; }
-  inline ConstIterator begin() const noexcept {
+  [[nodiscard]] inline Iterator begin() noexcept {
+    return Iterator{arr_.begin(), 0};
+  }
+  [[nodiscard]] inline Iterator end() noexcept {
+    return Iterator{arr_.end(), arr_.size()};
+  }
+  [[nodiscard]] inline ConstIterator begin() const noexcept {
     return ConstIterator{arr_.data(), 0};
   }
-  inline ConstIterator end() const noexcept {
+  [[nodiscard]] inline ConstIterator end() const noexcept {
     return ConstIterator{arr_.data(), arr_.size()};
   }
 

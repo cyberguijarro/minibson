@@ -52,7 +52,9 @@ class BadCast final
 public:
   using std::bad_cast::bad_cast;
 
-  const char *what() const noexcept override { return std::bad_cast::what(); }
+  [[nodiscard]] const char *what() const noexcept override {
+    return std::bad_cast::what();
+  }
 };
 
 class InvalidArgument final
@@ -61,7 +63,7 @@ class InvalidArgument final
 public:
   using std::invalid_argument::invalid_argument;
 
-  const char *what() const noexcept override {
+  [[nodiscard]] const char *what() const noexcept override {
     return std::invalid_argument::what();
   }
 };
@@ -72,7 +74,7 @@ class OutOfRange final
 public:
   using std::out_of_range::out_of_range;
 
-  const char *what() const noexcept override {
+  [[nodiscard]] const char *what() const noexcept override {
     return std::out_of_range::what();
   }
 };
@@ -93,10 +95,10 @@ enum NodeType {
 enum Scalar {}; // special value for scalars
 
 // needed for prevent warning about enum compare
-constexpr bool operator==(NodeType lhs, int rhs) {
+[[nodiscard]] constexpr bool operator==(NodeType lhs, int rhs) noexcept {
   return int(lhs) == rhs;
 }
-constexpr bool operator!=(NodeType lhs, int rhs) {
+[[nodiscard]] constexpr bool operator!=(NodeType lhs, int rhs) noexcept {
   return int(lhs) != rhs;
 }
 } // namespace bson
@@ -118,11 +120,11 @@ public:
   explicit Node(const byte *data)
       : data_{data} {}
 
-  constexpr bson::NodeType type() const noexcept {
+  [[nodiscard]] constexpr bson::NodeType type() const noexcept {
     return static_cast<bson::NodeType>(*data_);
   }
 
-  inline std::string_view key() const noexcept {
+  [[nodiscard]] inline std::string_view key() const noexcept {
     return std::string_view{
         reinterpret_cast<const char *>(data_ + SIZE_OF_ZERO_BYTE)};
   }
@@ -130,7 +132,7 @@ public:
   /**\return binary length of the node. In case of some unexpected value return
    * 0
    */
-  int length() const noexcept {
+  [[nodiscard]] int length() const noexcept {
     int result = SIZE_OF_BSON_TYPE + this->key().size() + SIZE_OF_ZERO_BYTE;
 
     if (result ==
@@ -196,10 +198,10 @@ public:
     return converter(offset);
   }
 
-  const void *data() const noexcept { return data_; }
+  [[nodiscard]] const void *data() const noexcept { return data_; }
 
   template <class InputType>
-  bool valid(int maxLength) const noexcept {
+  [[nodiscard]] bool valid(int maxLength) const noexcept {
     constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
     if (this->type() != nodeTypeCode) {
@@ -290,22 +292,22 @@ public:
     }
   }
 
-  inline const void *data() const { return data_; }
+  [[nodiscard]] inline const void *data() const { return data_; }
 
-  inline virtual bson::NodeType type() const noexcept {
+  [[nodiscard]] inline virtual bson::NodeType type() const noexcept {
     return bson::NodeType::document_node;
   }
 
   /**\brief check all nested fields of bson and return true if all fine,
    * otherwise - false
    */
-  bool valid() const noexcept;
+  [[nodiscard]] bool valid() const noexcept;
 
-  inline bool empty() const noexcept { return !data_; }
+  [[nodiscard]] inline bool empty() const noexcept { return !data_; }
 
   /**\return binary length of the document
    */
-  inline int length() const noexcept {
+  [[nodiscard]] inline int length() const noexcept {
     if (data_) {
       return *reinterpret_cast<const int *>(data_);
     } else {
@@ -315,7 +317,7 @@ public:
 
   /**\return capacity of nodes in the document
    */
-  inline int size() const noexcept;
+  [[nodiscard]] inline int size() const noexcept;
 
   /**\brief forward iterator
    */
@@ -333,18 +335,22 @@ public:
       return *this;
     }
 
-    bool operator==(const ConstIterator &rhs) const noexcept {
+    [[nodiscard]] bool operator==(const ConstIterator &rhs) const noexcept {
       return this->offset_ == rhs.offset_;
     }
 
-    bool operator!=(const ConstIterator &rhs) const noexcept {
+    [[nodiscard]] bool operator!=(const ConstIterator &rhs) const noexcept {
       return this->offset_ != rhs.offset_;
     }
 
-    Node operator*() noexcept { return Node{offset_}; }
+    [[nodiscard]] Node operator*() noexcept { return Node{offset_}; }
 
-    bson::NodeType   type() const noexcept { return Node{offset_}.type(); }
-    std::string_view key() const noexcept { return Node{offset_}.key(); }
+    [[nodiscard]] bson::NodeType type() const noexcept {
+      return Node{offset_}.type();
+    }
+    [[nodiscard]] std::string_view key() const noexcept {
+      return Node{offset_}.key();
+    }
 
     template <class InputType>
     typename type_traits<InputType>::return_type value() const noexcept(false) {
@@ -361,7 +367,7 @@ public:
     const byte *offset_;
   };
 
-  inline ConstIterator begin() const noexcept {
+  [[nodiscard]] inline ConstIterator begin() const noexcept {
     if (this->empty()) {
       return ConstIterator{};
     }
@@ -369,7 +375,7 @@ public:
     return ConstIterator{data_ + SIZE_OF_BSON_SIZE};
   }
 
-  inline ConstIterator end() const noexcept {
+  [[nodiscard]] inline ConstIterator end() const noexcept {
     if (this->empty()) {
       return ConstIterator{};
     }
@@ -379,11 +385,11 @@ public:
   }
 
   template <class InputType>
-  bool contains(std::string_view key) const noexcept;
+  [[nodiscard]] bool contains(std::string_view key) const noexcept;
 
   /**\brief same as template function contains, but not check type
    */
-  bool contains(std::string_view key) const noexcept;
+  [[nodiscard]] bool contains(std::string_view key) const noexcept;
 
   /**\throw bson::OutOfRange if value not found or if value have
    * different type \brief this safely function for get value from bson
@@ -417,11 +423,11 @@ public:
   bool contains(std::string_view) const noexcept = delete;
 
   template <class T>
-  bool contains(int i) const noexcept {
+  [[nodiscard]] bool contains(int i) const noexcept {
     return Document::contains<T>(std::to_string(i));
   }
 
-  inline bson::NodeType type() const noexcept override {
+  [[nodiscard]] inline bson::NodeType type() const noexcept override {
     return bson::array_node;
   }
 };
