@@ -984,36 +984,32 @@ public:
     Iterator() noexcept = default;
 
     Iterator &operator++() {
-      ++imp_;
       ++num_;
       return *this;
     }
     Iterator &operator++(int) {
-      ++imp_;
       ++num_;
       return *this;
     }
     Iterator &operator--() {
-      --imp_;
       --num_;
       return *this;
     }
     Iterator &operator--(int) {
-      --imp_;
       --num_;
       return *this;
     }
 
-    [[nodiscard]] UNodeValue &operator*() noexcept { return *imp_; }
+    [[nodiscard]] UNodeValue &operator*() noexcept { return *(imp_ + num_); }
     [[nodiscard]] bool        operator==(const Iterator &rhs) const noexcept {
-      return this->imp_ == rhs.imp_;
+      return this->imp_ + this->num_ == rhs.imp_ + rhs.num_;
     }
     [[nodiscard]] bool operator!=(const Iterator &rhs) const noexcept {
-      return this->imp_ != rhs.imp_;
+      return this->imp_ + this->num_ != rhs.imp_ + rhs.num_;
     }
 
     [[nodiscard]] inline bson::NodeType type() const noexcept {
-      return (*imp_)->type();
+      return (*(imp_ + num_))->type();
     }
     [[nodiscard]] inline std::string key() const noexcept {
       return std::to_string(num_);
@@ -1032,8 +1028,10 @@ public:
       using value_type           = typename type_traits<InputType>::value_type;
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if ((*imp_)->type() == nodeTypeCode) {
-        return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
+      imp_iter_type iter = imp_ + num_;
+
+      if ((*iter)->type() == nodeTypeCode) {
+        return reinterpret_cast<NodeValueT<value_type> *>((*iter).get())
             ->value();
       }
 
@@ -1051,21 +1049,23 @@ public:
       using return_type          = typename type_traits<InputType>::return_type;
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if ((*imp_)->type() == nodeTypeCode) {
+      imp_iter_type iter = imp_ + num_;
+
+      if ((*iter)->type() == nodeTypeCode) {
         if constexpr (std::is_convertible<value_type, return_type>::value) {
-          return reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+          return reinterpret_cast<const NodeValueT<value_type> *>((*iter).get())
               ->value();
         } else if constexpr (std::is_nothrow_constructible<return_type,
                                                            value_type>::value) {
           return return_type(
-              reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+              reinterpret_cast<const NodeValueT<value_type> *>((*iter).get())
                   ->value());
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
 
           return converter(
-              reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+              reinterpret_cast<const NodeValueT<value_type> *>((*iter).get())
                   ->value());
         }
       }
@@ -1074,13 +1074,14 @@ public:
     }
 
   private:
-    Iterator(imp_iter_type &&imp, size_t num) noexcept
+    Iterator(imp_iter_type imp, size_t num) noexcept
         : imp_{imp}
         , num_{num} {}
 
   private:
     imp_iter_type imp_;
-    size_t        num_;
+    // needed for get key of node
+    size_t num_;
   };
 
   class ConstIterator {
@@ -1137,8 +1138,10 @@ public:
       using value_type           = typename type_traits<InputType>::value_type;
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if ((*(imp_ + num_))->type() == nodeTypeCode) {
-        return reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+      imp_iter_type iter = imp_ + num_;
+
+      if ((*iter)->type() == nodeTypeCode) {
+        return reinterpret_cast<const NodeValueT<value_type> *>((*iter).get())
             ->value();
       }
 
@@ -1156,21 +1159,23 @@ public:
       using return_type          = typename type_traits<InputType>::return_type;
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
-      if ((*(imp_ + num_))->type() == nodeTypeCode) {
+      imp_iter_type iter = imp_ + num_;
+
+      if ((*iter)->type() == nodeTypeCode) {
         if constexpr (std::is_convertible<value_type, return_type>::value) {
-          return reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+          return reinterpret_cast<const NodeValueT<value_type> *>((*iter).get())
               ->value();
         } else if constexpr (std::is_nothrow_constructible<return_type,
                                                            value_type>::value) {
           return return_type(
-              reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+              reinterpret_cast<const NodeValueT<value_type> *>((*iter).get())
                   ->value());
         } else {
           constexpr return_type (*converter)(const value_type &) =
               type_traits<InputType>::converter;
 
           return converter(
-              reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+              reinterpret_cast<const NodeValueT<value_type> *>((*iter).get())
                   ->value());
         }
       }
