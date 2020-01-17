@@ -588,8 +588,7 @@ public:
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
       if (imp_->second->type() == nodeTypeCode) {
-        return reinterpret_cast<const NodeValueT<value_type> *>(
-                   imp_->second.get())
+        return reinterpret_cast<NodeValueT<value_type> *>(imp_->second.get())
             ->value();
       }
 
@@ -665,10 +664,10 @@ public:
     [[nodiscard]] const UNodeValue &operator*() const noexcept {
       return imp_->second;
     }
-    [[nodiscard]] bool operator==(const Iterator &rhs) const noexcept {
+    [[nodiscard]] bool operator==(const ConstIterator &rhs) const noexcept {
       return this->imp_ == rhs.imp_;
     }
-    [[nodiscard]] bool operator!=(const Iterator &rhs) const noexcept {
+    [[nodiscard]] bool operator!=(const ConstIterator &rhs) const noexcept {
       return this->imp_ != rhs.imp_;
     }
 
@@ -1014,7 +1013,7 @@ public:
       constexpr int nodeTypeCode = type_traits<InputType>::node_type_code;
 
       if ((*imp_)->type() == nodeTypeCode) {
-        return reinterpret_cast<const NodeValueT<value_type> *>((*imp_).get())
+        return reinterpret_cast<NodeValueT<value_type> *>((*imp_).get())
             ->value();
       }
 
