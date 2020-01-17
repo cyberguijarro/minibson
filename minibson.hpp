@@ -329,7 +329,19 @@ public:
 };
 
 class Document final {
+  using container_type = std::map<std::string, UNodeValue>;
+  using node_type      = container_type::node_type;
+
 public:
+  /**\brief extract node from document without relocation. After the operation
+   * the document not contains the node
+   */
+  node_type extract(const std::string &key) { return doc_.extract(key); }
+  /**\brief move some document node in the document
+   * \see extract
+   */
+  void insert(node_type &&node) { doc_.insert(std::move(node)); };
+
   Document() noexcept = default;
 
   /**\param buffer pointer to serialized bson document
@@ -349,6 +361,9 @@ public:
   [[nodiscard]] constexpr bson::NodeType type() const noexcept {
     return bson::document_node;
   }
+
+  [[nodiscard]] bool empty() const noexcept { return doc_.empty(); }
+
   [[nodiscard]] int getSerializedSize() const noexcept {
     int count = SIZE_OF_BSON_SIZE;
     for (auto &[key, val] : doc_) {
@@ -537,7 +552,7 @@ public:
 
   class Iterator {
     friend Document;
-    using imp_iter_type = std::map<std::string, UNodeValue>::iterator;
+    using imp_iter_type = container_type::iterator;
 
   public:
     Iterator() noexcept = default;
@@ -639,7 +654,7 @@ public:
 
   class ConstIterator {
     friend Document;
-    using imp_iter_type = std::map<std::string, UNodeValue>::const_iterator;
+    using imp_iter_type = container_type::const_iterator;
 
   public:
     ConstIterator() noexcept = default;
@@ -757,10 +772,12 @@ private:
   void deserialize(microbson::Document doc);
 
 private:
-  std::map<std::string, UNodeValue> doc_;
+  container_type doc_;
 };
 
 class Array final {
+  using container_type = std::vector<UNodeValue>;
+
 public:
   Array() noexcept = default;
   Array(const void *buffer, int length) {
@@ -776,6 +793,9 @@ public:
   [[nodiscard]] constexpr bson::NodeType type() const noexcept {
     return bson::array_node;
   }
+
+  [[nodiscard]] bool empty() const noexcept { return arr_.empty(); }
+
   [[nodiscard]] int getSerializedSize() const noexcept {
     int count = SIZE_OF_BSON_SIZE;
     for (size_t i = 0; i < arr_.size(); ++i) {
@@ -958,7 +978,7 @@ public:
 
   class Iterator {
     friend Array;
-    using imp_iter_type = std::vector<UNodeValue>::iterator;
+    using imp_iter_type = UNodeValue *;
 
   public:
     Iterator() noexcept = default;
@@ -1168,10 +1188,10 @@ public:
     size_t        num_;
   };
   [[nodiscard]] inline Iterator begin() noexcept {
-    return Iterator{arr_.begin(), 0};
+    return Iterator{arr_.data(), 0};
   }
   [[nodiscard]] inline Iterator end() noexcept {
-    return Iterator{arr_.end(), arr_.size()};
+    return Iterator{arr_.data(), arr_.size()};
   }
   [[nodiscard]] inline ConstIterator begin() const noexcept {
     return ConstIterator{arr_.data(), 0};
@@ -1184,7 +1204,7 @@ private:
   void deserialize(microbson::Document doc) noexcept(false);
 
 private:
-  std::vector<UNodeValue> arr_;
+  container_type arr_;
 };
 
 inline void Document::deserialize(microbson::Document doc) {
