@@ -268,29 +268,21 @@ private:
 
 class Document {
 public:
-  Document()
-      : data_{nullptr} {}
+  Document() noexcept
+      : data_{nullptr}
+      , bufferLength_{0} {}
 
   virtual ~Document() = default;
 
   /**\param data pointer to serialized bson data
    * \param length size of buffer with bson data. Must be equal or greater then
    * serialized size of bson
-   * \throw bson::InvalidArgument if data isn't `nullptr`, size set and
-   * validation failed
-   * \warning in konstructor cheks only size of bson and last byte (which must
-   * be `\0`), but it not validate nested fields. @see valid
+   * \warning in konstructor it don't check input buffer on cantaining valid
+   * bson. For validate it you need use special method, @see valid
    */
-  Document(const void *data, int length)
-      : data_{reinterpret_cast<const byte *>(data)} {
-    if (data_ &&
-        !(length >= MINIMAL_SIZE_OF_BSON_DOCUMENT && this->length() <= length &&
-          data_[this->length() - 1] == '\0')) {
-      throw bson::InvalidArgument{
-          "invalid bson; input length: " + std::to_string(length) +
-          ", serialized length: " + std::to_string(this->length())};
-    }
-  }
+  Document(const void *data, int length) noexcept
+      : data_{reinterpret_cast<const byte *>(data)}
+      , bufferLength_{length} {}
 
   [[nodiscard]] inline const void *data() const { return data_; }
 
@@ -392,7 +384,8 @@ public:
   [[nodiscard]] bool contains(std::string_view key) const noexcept;
 
   /**\throw bson::OutOfRange if value not found or if value have
-   * different type \brief this safely function for get value from bson
+   * different type
+   * \brief this safely function for get value from bson
    * array by index, BUT!: this is very slowly. Use iterator where ever
    * it possible
    */
@@ -402,6 +395,7 @@ public:
 
 private:
   const byte *data_;
+  int         bufferLength_;
 };
 
 class Array final : public Document {
@@ -575,6 +569,13 @@ inline int Document::size() const noexcept {
 }
 
 inline bool Document::valid() const noexcept {
+  // first of all check by bufferLength
+  if (data_ &&
+      !(bufferLength_ >= MINIMAL_SIZE_OF_BSON_DOCUMENT &&
+        this->length() <= bufferLength_ && data_[this->length() - 1] == '\0')) {
+    return false;
+  }
+
   auto end = this->end();
   for (auto i = this->begin(); i != end; ++i) {
     Node node      = *i;

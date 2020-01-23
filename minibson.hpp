@@ -348,11 +348,13 @@ public:
    * \param length size of buffer, need for validate the document
    * \throw bson::InvalidArgument if can not deserialize bson
    */
-  Document(const void *buffer, int length) {
+  Document(const void *buffer, int length) noexcept(false) {
     microbson::Document doc{buffer, length};
     this->deserialize(doc);
   }
-  explicit Document(microbson::Document doc) { this->deserialize(doc); }
+  explicit Document(microbson::Document doc) noexcept(false) {
+    this->deserialize(doc);
+  }
 
   Document(const Document &)        = delete;
   Document(Document &&rhs) noexcept = default;
@@ -769,7 +771,7 @@ public:
   }
 
 private:
-  void deserialize(microbson::Document doc);
+  void deserialize(microbson::Document doc) noexcept(false);
 
 private:
   container_type doc_;
@@ -780,11 +782,13 @@ class Array final {
 
 public:
   Array() noexcept = default;
-  Array(const void *buffer, int length) {
-    microbson::Document doc{buffer, length};
-    this->deserialize(doc);
+  Array(const void *buffer, int length) noexcept(false) {
+    microbson::Array arr{buffer, length};
+    this->deserialize(arr);
   }
-  explicit Array(microbson::Array doc) { this->deserialize(doc); }
+  explicit Array(microbson::Array arr) noexcept(false) {
+    this->deserialize(arr);
+  }
 
   Array(const Array &)     = delete;
   Array(Array &&) noexcept = default;
@@ -1206,13 +1210,18 @@ public:
   }
 
 private:
-  void deserialize(microbson::Document doc) noexcept(false);
+  void deserialize(microbson::Array arr) noexcept(false);
 
 private:
   container_type arr_;
 };
 
-inline void Document::deserialize(microbson::Document doc) {
+inline void Document::deserialize(microbson::Document doc) noexcept(false) {
+  // first validate doc
+  if (!doc.valid()) {
+    throw bson::InvalidArgument{"invalid bson"};
+  }
+
   for (microbson::Node node : doc) {
     switch (node.type()) {
     case bson::string_node:
@@ -1259,7 +1268,7 @@ inline void Document::deserialize(microbson::Document doc) {
   }
 }
 
-inline int Document::serialize(void *buf, int length) const {
+inline int Document::serialize(void *buf, int length) const noexcept(false) {
   int size = this->getSerializedSize();
 
   if (length < size) {
@@ -1296,9 +1305,14 @@ inline std::vector<byte> Document::serialize() const {
   return retval;
 }
 
-inline void Array::deserialize(microbson::Document doc) {
-  arr_.reserve(doc.size());
-  for (microbson::Node node : doc) {
+inline void Array::deserialize(microbson::Array arr) {
+  // first validate doc
+  if (!arr.valid()) {
+    throw bson::InvalidArgument{"invalid bson"};
+  }
+
+  arr_.reserve(arr.size());
+  for (microbson::Node node : arr) {
     switch (node.type()) {
     case bson::string_node:
       arr_.emplace_back(

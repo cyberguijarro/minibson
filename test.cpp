@@ -281,8 +281,9 @@ void microbson_test() {
   char *buffer = new char[length];
   d.serialize(buffer, length);
 
-  CHECK_EXCEPT((microbson::Document{buffer, length - 1}),
-               bson::InvalidArgument);
+  microbson::Document wrong{buffer, length - 1};
+  assert(!wrong.valid());
+
   microbson::Document{buffer,
                       length + 1}; // all right, because length of buffer is
                                    // bigger then length of serialized bson
