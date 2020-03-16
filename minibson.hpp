@@ -54,13 +54,6 @@ struct type_traits<int64_t> {
 };
 
 template <>
-struct type_traits<long long int> {
-  enum { node_type_code = bson::int64_node };
-  using value_type  = int64_t;
-  using return_type = int64_t;
-};
-
-template <>
 struct type_traits<std::string> {
   enum { node_type_code = bson::string_node };
   using value_type  = std::string;

@@ -63,7 +63,7 @@ void minibson_test() {
   minibson::Document d;
 
   d.set("int32", 1);
-  d.set("int64", 140737488355328LL);
+  d.set("int64", 140737488355328);
   d.set("float", 30.20);
   d.set("string", std::string{"text"});
   d.set("string_view", std::string_view{"text"});
@@ -137,7 +137,7 @@ void minibson_test() {
   assert(d.contains<bson::Scalar>("float"));
 
   assert(d.get<int32_t>("int32") == 1);
-  assert(d.get<int64_t>("int64") == 140737488355328LL);
+  assert(d.get<int64_t>("int64") == 140737488355328);
   assert(d.get<double>("float") == 30.20);
   assert(d.get<bool>("boolean") == true);
   assert(d.get<std::string_view>("string") == "text");
@@ -153,7 +153,7 @@ void minibson_test() {
       std::is_same<decltype(d.get<bson::Scalar>("float")), double>::value);
 
   assert(d.get<bson::Scalar>("int32") == 1);
-  assert(d.get<bson::Scalar>("int64") == 140737488355328LL);
+  assert(d.get<bson::Scalar>("int64") == 140737488355328);
   assert(d.get<bson::Scalar>("float") == 30.20);
 
   assert(d.get<String>("binary") == SOME_BUF_STR);
@@ -261,7 +261,7 @@ void microbson_test() {
   minibson::Document d;
 
   d.set("int32", 1);
-  d.set("int64", 140737488355328LL);
+  d.set("int64", 140737488355328);
   d.set("float", 30.20);
   d.set("string", std::string{"text"});
   d.set("binary", minibson::Binary(&SOME_BUF_STR, sizeof(SOME_BUF_STR)));
@@ -325,7 +325,7 @@ void microbson_test() {
   assert(doc.contains<bson::Scalar>("float"));
 
   assert(doc.get<int32_t>("int32") == 1);
-  assert(doc.get<int64_t>("int64") == 140737488355328LL);
+  assert(doc.get<int64_t>("int64") == 140737488355328);
   assert(doc.get<double>("float") ==
          30.20); // I don't care about comparison floating point numbers,
                  // becuase it is not calculated
@@ -343,7 +343,7 @@ void microbson_test() {
       std::is_same<decltype(doc.get<bson::Scalar>("float")), double>::value);
 
   assert(doc.get<bson::Scalar>("int32") == 1);
-  assert(doc.get<bson::Scalar>("int64") == 140737488355328LL);
+  assert(doc.get<bson::Scalar>("int64") == 140737488355328);
   assert(doc.get<bson::Scalar>("float") == 30.20);
 
   microbson::Document nestedDoc = doc.get<microbson::Document>("document");
